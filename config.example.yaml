@@ -1,0 +1,29 @@
+llm:
+  base_url: "https://example-llm-provider.local/v1/chat/completions"
+  api_token: "replace-me"
+  model_name: "gpt-4o-mini"
+  custom_headers:
+    X-Client-Name: "dutch-a2-anki-pipeline"
+  timeout_seconds: 60
+  max_retries: 2
+  retry_backoff_seconds: 1.5
+  temperature: 0.2
+  max_tokens: 800
+
+deck:
+  deck_name: "Lesson 3 - De school"
+  model_name: "Dutch A2 Inburgering Vocabulary"
+  deck_id_seed: "dutch-a2-inburgering"
+
+generation:
+  default_topic: "De school"
+  default_lesson: "Lesson 3"
+  default_exam_level: "A2 Inburgering Spreken"
+  json_repair_enabled: true
+  parallelism: 4
+
+cache:
+  directory: ".cache/cards"
+
+logging:
+  level: "INFO"
