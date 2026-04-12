@@ -41,7 +41,6 @@ DEFAULT_CSS = """
 .front {
   font-size: 28px;
   font-weight: bold;
-  color: #6b1d1d;
 }
 .word {
   font-size: 28px;
@@ -85,22 +84,18 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
                 "afmt": """
 {{FrontSide}}
 <hr id="answer">
-<div class="word">{{Word_NL}}</div>
+<div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
-<div class="meta"><span class="label">POS:</span> {{POS}}</div>
-{{#Article}}<div class="grammar"><span class="label">Article:</span> {{Article}}</div>{{/Article}}
-{{#Plural}}<div class="grammar"><span class="label">Plural:</span> {{Plural}}</div>{{/Plural}}
-{{#Verb_Forms}}<div class="grammar"><span class="label">Verb Forms:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
-{{#Adjective_Forms}}<div class="grammar"><span class="label">Adjective Forms:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
+{{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
+{{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijke vormen:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="example">
-  <div class="label">Example:</div>
+  <div class="label">Voorbeeld:</div>
   <div class="example-ru">{{Example_RU}}</div>
   <div class="example-nl">{{Example_NL}}</div>
 </div>
+<div class="meta"><span class="label">Woordsoort:</span> {{POS}}</div>
 {{#Word_Audio}}<div class="audio">{{Word_Audio}}</div>{{/Word_Audio}}
 {{#Example_Audio}}<div class="audio">{{Example_Audio}}</div>{{/Example_Audio}}
-<div class="meta"><span class="label">Lesson:</span> {{Lesson}}</div>
-<div class="meta"><span class="label">Topic:</span> {{Topic}}</div>
                 """.strip(),
             }
         ],
@@ -153,6 +148,23 @@ def build_front(card: GeneratedCard) -> str:
     return html.escape(card.russian_translation)
 
 
+def format_part_of_speech(card: GeneratedCard) -> str:
+    """Convert internal POS values into learner-facing Dutch labels."""
+    labels = {
+        "noun": "zelfstandig naamwoord",
+        "verb": "werkwoord",
+        "adjective": "bijvoeglijk naamwoord",
+        "adverb": "bijwoord",
+        "pronoun": "voornaamwoord",
+        "preposition": "voorzetsel",
+        "conjunction": "voegwoord",
+        "phrase": "woordgroep",
+        "expression": "uitdrukking",
+        "other": "overig",
+    }
+    return html.escape(labels.get(card.part_of_speech.value, card.part_of_speech.value))
+
+
 def build_note(model: genanki.Model, source_item: SourceItem, card: GeneratedCard) -> genanki.Note:
     """Create a genanki note from a validated card."""
     fields = [
@@ -160,7 +172,7 @@ def build_note(model: genanki.Model, source_item: SourceItem, card: GeneratedCar
         html.escape(card.dutch_word),
         html.escape(card.russian_translation),
         html.escape(card.ipa_transcription),
-        html.escape(card.part_of_speech.value),
+        format_part_of_speech(card),
         html.escape(card.article or ""),
         html.escape(card.plural_form or ""),
         format_verb_forms(card.verb_forms),

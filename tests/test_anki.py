@@ -38,3 +38,19 @@ def test_note_model_contains_expected_fields() -> None:
     model = create_note_model(DeckSettings())
     model_field_names = [field["name"] for field in model.fields]
     assert model_field_names == NOTE_FIELDS
+
+
+def test_note_model_template_matches_updated_layout() -> None:
+    model = create_note_model(DeckSettings())
+    template = model.templates[0]["afmt"]
+    css = model.css
+
+    assert "Woordsoort:" in template
+    assert "Voorbeeld:" in template
+    assert "Werkwoordsvormen:" in template
+    assert "Bijvoeglijke vormen:" in template
+    assert "Lesson:" not in template
+    assert "Topic:" not in template
+    assert "Article:" not in template
+    assert "(meervoud {{Plural}})" in template
+    assert "color: #6b1d1d;" not in css
