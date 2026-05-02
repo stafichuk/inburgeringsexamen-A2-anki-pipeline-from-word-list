@@ -1,6 +1,6 @@
 # Dutch A2 Inburgering Anki Pipeline
 
-CLI application for generating `.apkg` Anki decks from plain Dutch word lists. The tool is designed for Russian-speaking learners preparing for the A2 Inburgering Spreken exam and produces note fields that are ready for later HyperTTS use inside Anki.
+CLI application for generating `.apkg` Anki decks from plain Dutch word lists. The tool is designed for Russian-speaking learners preparing for the A2 Inburgering Spreken exam and can optionally generate Dutch audio with Azure Text to Speech.
 
 ## Features
 - Reads a plain text file with one Dutch word or phrase per line.
@@ -10,12 +10,13 @@ CLI application for generating `.apkg` Anki decks from plain Dutch word lists. T
 - Caches generated items locally by word, topic, lesson, model, and prompt version.
 - Generates uncached items in parallel with a bounded worker pool.
 - Generates a real `.apkg` deck with a custom note type using `genanki`.
-- Separates Dutch word and Dutch example sentence fields for later HyperTTS audio generation.
+- Optionally generates and packages Dutch word and example-sentence audio.
 
 ## Project Structure
 ```text
 app/
   anki.py
+  audio.py
   cache.py
   cli.py
   config.py
@@ -33,6 +34,7 @@ README.md
 ## Requirements
 - Python 3.11+
 - A reachable OpenAI-compatible chat-completions endpoint
+- An Azure Speech resource if `audio.enabled` is true
 
 ## Installation
 ```bash
@@ -71,11 +73,21 @@ generation:
 cache:
   directory: ".cache/cards"
 
+audio:
+  enabled: false
+  provider: "azure"
+  directory: ".cache/audio"
+  azure:
+    region: "westeurope"
+    # endpoint: "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
+    api_key: "replace-me"
+    voice: "nl-NL-FennaNeural"
+
 logging:
   level: "INFO"
 ```
 
-See [`config.example.yaml`](/Users/dstafichuk/study/dutch/inburgeringsexamen-A2-anki-pipeline-from-word-list/config.example.yaml).
+See [`config.example.yaml`](config.example.yaml).
 
 ## Usage
 Generate a deck with config defaults:
@@ -185,7 +197,7 @@ Card behavior:
 - Back side shows Dutch, IPA, grammar details, then the example sentence in this order:
   1. Russian translation
   2. Dutch sentence
-- `Word_Audio` and `Example_Audio` are included as empty placeholders for HyperTTS workflows in Anki.
+- `Word_Audio` and `Example_Audio` are populated with packaged `[sound:...]` references when audio generation is enabled.
 
 ## Caching
 Each successful generation is cached locally in `.cache/cards/` by:
@@ -220,6 +232,30 @@ For this workload, bounded parallelism is a better fit than batching:
 - retries stay per item
 - deck output still preserves the original input order
 
+## Audio Generation
+Audio generation is disabled by default. Enable it in the config file:
+
+```yaml
+audio:
+  enabled: true
+  provider: "azure"
+  directory: ".cache/audio"
+  azure:
+    region: "westeurope"
+    api_key: "replace-me"
+    voice: "nl-NL-FennaNeural"
+```
+
+You can provide `audio.azure.endpoint` instead of `audio.azure.region` when you need to target a specific Azure Speech endpoint. If both are set, the explicit endpoint is used.
+
+When enabled, the app:
+- generates one MP3 for `Word_Audio` from the Dutch word
+- generates one MP3 for `Example_Audio` from the Dutch example sentence
+- reuses existing files in `audio.directory` for unchanged text, voice, and output format
+- writes Anki `[sound:...]` references into the note fields and bundles the media into the `.apkg`
+
+Audio failures are non-fatal for deck writing. The affected sound reference is omitted, the deck is still written for successful cards, and the CLI exits with a non-zero status.
+
 ## Testing
 Run the test suite with:
 
@@ -235,5 +271,4 @@ Included tests cover:
 
 ## Notes
 - The client targets OpenAI-compatible chat-completions APIs.
-- The tool does not generate audio and does not call TTS services.
 - If some items fail validation after all retries, the deck is still written for successful items and the CLI exits with a non-zero status.

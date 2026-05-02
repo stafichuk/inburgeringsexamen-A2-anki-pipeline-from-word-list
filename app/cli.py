@@ -163,6 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     if result.failed_items:
         summary = json.dumps([asdict(item) for item in result.failed_items], ensure_ascii=False, indent=2)
         logging.error("Some items failed and were skipped:\n%s", summary)
+    if result.audio_failed_items:
+        summary = json.dumps([asdict(item) for item in result.audio_failed_items], ensure_ascii=False, indent=2)
+        logging.error("Some audio items failed and were skipped:\n%s", summary)
+
+    if result.failed_items or result.audio_failed_items:
         return 1
     return 0
 

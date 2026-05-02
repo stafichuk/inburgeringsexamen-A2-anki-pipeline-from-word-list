@@ -25,5 +25,15 @@ generation:
 cache:
   directory: ".cache/cards"
 
+audio:
+  enabled: false
+  provider: "azure"
+  directory: ".cache/audio"
+  azure:
+    region: "westeurope"
+    # endpoint: "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
+    api_key: "replace-me"
+    voice: "nl-NL-FennaNeural"
+
 logging:
   level: "INFO"

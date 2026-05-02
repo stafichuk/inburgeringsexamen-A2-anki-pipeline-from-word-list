@@ -2,24 +2,34 @@ import time
 from pathlib import Path
 
 import app.pipeline as pipeline_module
+from app.audio import AudioGenerationError
 from app.cache import CardCache
 from app.config import AppSettings
 from app.models import GeneratedCard, SourceItem, VerbForms
 from app.pipeline import DeckGenerationPipeline
 
 
-def make_settings(cache_dir: Path, *, parallelism: int = 4) -> AppSettings:
-    return AppSettings.model_validate(
-        {
-            "llm": {
-                "base_url": "https://example.invalid/v1/chat/completions",
-                "api_token": "token",
-                "model_name": "test-model",
+def make_settings(cache_dir: Path, *, parallelism: int = 4, audio_enabled: bool = False) -> AppSettings:
+    payload = {
+        "llm": {
+            "base_url": "https://example.invalid/v1/chat/completions",
+            "api_token": "token",
+            "model_name": "test-model",
+        },
+        "generation": {"parallelism": parallelism},
+        "cache": {"directory": str(cache_dir)},
+    }
+    if audio_enabled:
+        payload["audio"] = {
+            "enabled": True,
+            "directory": str(cache_dir.parent / ".audio"),
+            "azure": {
+                "region": "westeurope",
+                "api_key": "key",
+                "voice": "nl-NL-FennaNeural",
             },
-            "generation": {"parallelism": parallelism},
-            "cache": {"directory": str(cache_dir)},
         }
-    )
+    return AppSettings.model_validate(payload)
 
 
 def make_card(word: str) -> GeneratedCard:
@@ -68,6 +78,26 @@ class SlowOrderedClient(FakeClient):
         }
         time.sleep(delays[source_item.text])
         return make_card(source_item.text)
+
+
+class FakeAudioGenerator:
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.calls: list[tuple[str, str]] = []
+
+    def generate_audio(self, text: str, *, label: str) -> Path:
+        self.calls.append((label, text))
+        path = self.directory / f"{label}-{len(self.calls)}.mp3"
+        path.write_bytes(f"{label}:{text}".encode("utf-8"))
+        return path
+
+
+class FailingExampleAudioGenerator(FakeAudioGenerator):
+    def generate_audio(self, text: str, *, label: str) -> Path:
+        if label == "example":
+            raise AudioGenerationError("example synthesis failed")
+        return super().generate_audio(text, label=label)
 
 
 def test_pipeline_uses_cache_without_calling_llm(tmp_path: Path) -> None:
@@ -132,7 +162,7 @@ def test_pipeline_preserves_input_order_with_parallel_generation(tmp_path: Path,
     settings = make_settings(tmp_path / ".cache", parallelism=3)
     captured_order: list[str] = []
 
-    def fake_build_deck_package(cards, output_path, deck_name, settings):  # type: ignore[no-untyped-def]
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
         captured_order.extend(source_item.text for source_item, _ in cards)
         output_path.write_text("stub", encoding="utf-8")
         return output_path
@@ -144,3 +174,66 @@ def test_pipeline_preserves_input_order_with_parallel_generation(tmp_path: Path,
 
     assert result.generated_items == 3
     assert captured_order == ["eerste", "tweede", "derde"]
+
+
+def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    captured_audio_by_guid = {}
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_audio_by_guid.update(audio_by_guid or {})
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    audio_generator = FakeAudioGenerator(tmp_path / "audio")
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=FakeClient(),
+        audio_generator=audio_generator,
+    ).run(input_path=input_path, output_path=output_path)
+
+    assert result.generated_items == 1
+    assert result.audio_failed_items == []
+    assert audio_generator.calls == [
+        ("word", "leren"),
+        ("example", "Ik gebruik leren in de les."),
+    ]
+    assert len(captured_audio_by_guid) == 1
+    audio = next(iter(captured_audio_by_guid.values()))
+    assert audio.word_audio is not None
+    assert audio.example_audio is not None
+
+
+def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    captured_audio_by_guid = {}
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_audio_by_guid.update(audio_by_guid or {})
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=FakeClient(),
+        audio_generator=FailingExampleAudioGenerator(tmp_path / "audio"),
+    ).run(input_path=input_path, output_path=output_path)
+
+    assert output_path.exists()
+    assert result.generated_items == 1
+    assert len(result.audio_failed_items) == 1
+    assert result.audio_failed_items[0].source_word == "leren"
+    assert result.audio_failed_items[0].field_name == "Example_Audio"
+    audio = next(iter(captured_audio_by_guid.values()))
+    assert audio.word_audio is not None
+    assert audio.example_audio is None

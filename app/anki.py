@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 import hashlib
 import html
 from pathlib import Path
@@ -70,6 +72,20 @@ def stable_anki_id(seed: str) -> int:
     return int(digest[:10], 16)
 
 
+@dataclass(frozen=True, slots=True)
+class NoteAudio:
+    """Audio media files attached to one generated note."""
+
+    word_audio: Path | None = None
+    example_audio: Path | None = None
+
+
+def build_note_guid(source_item: SourceItem) -> str:
+    """Build the stable note GUID for a source item."""
+    guid_seed = f"{source_item.text}|{source_item.topic or ''}|{source_item.lesson or ''}"
+    return hashlib.md5(guid_seed.encode("utf-8")).hexdigest()
+
+
 def create_note_model(settings: DeckSettings) -> genanki.Model:
     """Create the custom note type used by the generated deck."""
     model_id = stable_anki_id(f"{settings.deck_id_seed}:{settings.model_name}:model")
@@ -86,6 +102,7 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <hr id="answer">
 <div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
+<div class="meta"><span class="label">Woordsoort:</span> {{POS}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijke vormen:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="example">
@@ -162,7 +179,19 @@ def format_part_of_speech(card: GeneratedCard) -> str:
     return html.escape(labels.get(card.part_of_speech.value, card.part_of_speech.value))
 
 
-def build_note(model: genanki.Model, source_item: SourceItem, card: GeneratedCard) -> genanki.Note:
+def format_audio_reference(path: Path | None) -> str:
+    """Format an Anki sound reference for a packaged media file."""
+    if path is None:
+        return ""
+    return f" [sound:{html.escape(path.name)}]"
+
+
+def build_note(
+    model: genanki.Model,
+    source_item: SourceItem,
+    card: GeneratedCard,
+    audio: NoteAudio | None = None,
+) -> genanki.Note:
     """Create a genanki note from a validated card."""
     fields = [
         build_front(card),
@@ -176,14 +205,13 @@ def build_note(model: genanki.Model, source_item: SourceItem, card: GeneratedCar
         format_adjective_forms(card.adjective_forms),
         html.escape(card.example_sentence_nl),
         html.escape(card.example_sentence_ru),
-        "",
-        "",
+        format_audio_reference(audio.word_audio if audio else None),
+        format_audio_reference(audio.example_audio if audio else None),
         html.escape(source_item.lesson or ""),
         html.escape(source_item.topic or card.lesson_topic),
         html.escape(source_item.text),
     ]
-    guid_seed = f"{source_item.text}|{source_item.topic or ''}|{source_item.lesson or ''}"
-    return genanki.Note(model=model, fields=fields, guid=hashlib.md5(guid_seed.encode("utf-8")).hexdigest())
+    return genanki.Note(model=model, fields=fields, guid=build_note_guid(source_item))
 
 
 def build_deck_package(
@@ -191,16 +219,26 @@ def build_deck_package(
     output_path: Path,
     deck_name: str,
     settings: DeckSettings,
+    audio_by_guid: Mapping[str, NoteAudio] | None = None,
 ) -> Path:
     """Write a deck package to disk and return its path."""
     deck_id = stable_anki_id(f"{settings.deck_id_seed}:{deck_name}:deck")
     deck = genanki.Deck(deck_id=deck_id, name=deck_name)
     model = create_note_model(settings)
+    media_files: list[str] = []
+    seen_media_files: set[Path] = set()
 
     for source_item, card in cards:
-        deck.add_note(build_note(model, source_item, card))
+        audio = (audio_by_guid or {}).get(build_note_guid(source_item))
+        deck.add_note(build_note(model, source_item, card, audio=audio))
+        if audio is not None:
+            for media_path in (audio.word_audio, audio.example_audio):
+                if media_path is not None and media_path not in seen_media_files:
+                    media_files.append(str(media_path))
+                    seen_media_files.add(media_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     package = genanki.Package(deck)
+    package.media_files = media_files
     package.write_to_file(str(output_path))
     return output_path

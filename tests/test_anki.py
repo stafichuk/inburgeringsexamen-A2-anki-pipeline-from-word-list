@@ -1,15 +1,15 @@
+import json
 from pathlib import Path
+import zipfile
 
-from app.anki import NOTE_FIELDS, build_deck_package, create_note_model
+from app.anki import NOTE_FIELDS, NoteAudio, build_deck_package, build_note, build_note_guid, create_note_model
 from app.config import DeckSettings
 from app.models import GeneratedCard, SourceItem, VerbForms
 
 
-def test_deck_generation_writes_apkg(tmp_path: Path) -> None:
-    settings = DeckSettings()
-    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
-    card = GeneratedCard(
-        dutch_word="leren",
+def make_card(word: str = "leren") -> GeneratedCard:
+    return GeneratedCard(
+        dutch_word=word,
         russian_translation="учиться",
         part_of_speech="verb",
         ipa_transcription="ˈleːrə(n)",
@@ -18,14 +18,20 @@ def test_deck_generation_writes_apkg(tmp_path: Path) -> None:
         lesson_topic="De school",
         tags=["school", "verb"],
         verb_forms=VerbForms(
-            infinitive="leren",
-            present_tense="ik leer, jij leert, hij leert",
+            infinitive=word,
+            present_tense=f"ik {word}, jij {word}t, hij {word}t",
             past_tense="leerde, leerden",
             past_participle="geleerd",
             perfect_example="Ik heb Nederlands geleerd.",
             conjugation_notes="regular weak verb",
         ),
     )
+
+
+def test_deck_generation_writes_apkg(tmp_path: Path) -> None:
+    settings = DeckSettings()
+    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
+    card = make_card()
     output_path = tmp_path / "school.apkg"
 
     build_deck_package([(source_item, card)], output_path, "Lesson 3 - De school", settings)
@@ -54,3 +60,45 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "Article:" not in template
     assert "(meervoud {{Plural}})" in template
     assert "color: #6b1d1d;" not in css
+
+
+def test_build_note_includes_sound_references(tmp_path: Path) -> None:
+    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
+    model = create_note_model(DeckSettings())
+    audio = NoteAudio(
+        word_audio=tmp_path / "word.mp3",
+        example_audio=tmp_path / "example.mp3",
+    )
+
+    note = build_note(model, source_item, make_card(), audio=audio)
+
+    assert note.fields[11] == " [sound:word.mp3]"
+    assert note.fields[12] == " [sound:example.mp3]"
+
+
+def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
+    settings = DeckSettings()
+    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
+    word_audio = tmp_path / "word.mp3"
+    example_audio = tmp_path / "example.mp3"
+    word_audio.write_bytes(b"word")
+    example_audio.write_bytes(b"example")
+    output_path = tmp_path / "school.apkg"
+
+    build_deck_package(
+        [(source_item, make_card())],
+        output_path,
+        "Lesson 3 - De school",
+        settings,
+        audio_by_guid={
+            build_note_guid(source_item): NoteAudio(
+                word_audio=word_audio,
+                example_audio=example_audio,
+            )
+        },
+    )
+
+    with zipfile.ZipFile(output_path) as package:
+        media = json.loads(package.read("media").decode("utf-8"))
+
+    assert sorted(media.values()) == ["example.mp3", "word.mp3"]

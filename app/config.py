@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from .models import StrictModel
 
@@ -72,6 +72,32 @@ class CacheSettings(StrictModel):
     directory: Path = Path(".cache/cards")
 
 
+class AzureAudioSettings(StrictModel):
+    """Azure Text to Speech settings."""
+
+    region: str | None = None
+    endpoint: str | None = None
+    api_key: str | None = None
+    voice: str | None = None
+
+    @field_validator("region", "endpoint", "api_key", "voice")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        """Reject blank optional text values."""
+        if value is not None and not value.strip():
+            raise ValueError("audio settings must be null or non-empty")
+        return value
+
+
+class AudioSettings(StrictModel):
+    """Optional audio generation settings."""
+
+    enabled: bool = False
+    provider: Literal["azure"] = "azure"
+    directory: Path = Path(".cache/audio")
+    azure: AzureAudioSettings = Field(default_factory=AzureAudioSettings)
+
+
 class LoggingSettings(StrictModel):
     """Logging defaults."""
 
@@ -91,7 +117,26 @@ class AppSettings(StrictModel):
     deck: DeckSettings = Field(default_factory=DeckSettings)
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
+    audio: AudioSettings = Field(default_factory=AudioSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
+
+    @model_validator(mode="after")
+    def validate_audio_settings(self) -> "AppSettings":
+        """Require complete provider settings when audio generation is enabled."""
+        if not self.audio.enabled:
+            return self
+
+        azure = self.audio.azure
+        missing: list[str] = []
+        if azure.api_key is None:
+            missing.append("audio.azure.api_key")
+        if azure.voice is None:
+            missing.append("audio.azure.voice")
+        if azure.region is None and azure.endpoint is None:
+            missing.append("audio.azure.region or audio.azure.endpoint")
+        if missing:
+            raise ValueError(f"missing required audio settings: {', '.join(missing)}")
+        return self
 
 
 def _read_config_file(path: Path) -> dict[str, Any]:

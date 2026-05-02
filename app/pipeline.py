@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from .anki import build_deck_package
+from .anki import NoteAudio, build_deck_package, build_note_guid
+from .audio import AudioGenerationError, AudioGenerator, build_audio_generator
 from .cache import CardCache
 from .config import AppSettings
 from .llm_client import LLMClient, LLMClientError
@@ -34,6 +35,15 @@ class FailedItem:
 
 
 @dataclass(slots=True)
+class AudioFailedItem:
+    """An unrecoverable audio failure recorded during a pipeline run."""
+
+    source_word: str
+    field_name: str
+    reason: str
+
+
+@dataclass(slots=True)
 class PipelineResult:
     """Summary of a pipeline run."""
 
@@ -42,6 +52,7 @@ class PipelineResult:
     generated_items: int
     cached_items: int
     failed_items: list[FailedItem] = field(default_factory=list)
+    audio_failed_items: list[AudioFailedItem] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -50,6 +61,7 @@ class DeckGenerationPipeline:
 
     settings: AppSettings
     llm_client: CardGenerator | None = None
+    audio_generator: AudioGenerator | None = None
     cache: CardCache | None = None
 
     def __post_init__(self) -> None:
@@ -60,6 +72,8 @@ class DeckGenerationPipeline:
             )
         if self.cache is None:
             self.cache = CardCache(self.settings.cache.directory)
+        if self.settings.audio.enabled and self.audio_generator is None:
+            self.audio_generator = build_audio_generator(self.settings.audio)
 
     def run(
         self,
@@ -112,20 +126,83 @@ class DeckGenerationPipeline:
         if not cards:
             raise RuntimeError("no valid cards were generated; deck will not be written")
 
+        audio_failed_items: list[AudioFailedItem] = []
+        audio_by_guid = self._generate_audio_for_cards(cards, audio_failed_items)
+
         deck_name = resolve_deck_name(
             output_path=output_path,
             settings=self.settings,
             topic=topic,
             lesson=lesson,
         )
-        build_deck_package(cards, output_path, deck_name, self.settings.deck)
+        build_deck_package(cards, output_path, deck_name, self.settings.deck, audio_by_guid=audio_by_guid)
         return PipelineResult(
             output_path=output_path,
             total_items=len(source_items),
             generated_items=len(cards),
             cached_items=cached_items,
             failed_items=failed_items,
+            audio_failed_items=audio_failed_items,
         )
+
+    def _generate_audio_for_cards(
+        self,
+        cards: list[tuple[SourceItem, GeneratedCard]],
+        audio_failed_items: list[AudioFailedItem],
+    ) -> dict[str, NoteAudio]:
+        """Generate audio media for cards and return note GUID to audio mappings."""
+        if not self.settings.audio.enabled or self.audio_generator is None:
+            return {}
+
+        audio_by_guid: dict[str, NoteAudio] = {}
+        for source_item, card in cards:
+            LOGGER.info("Generating audio for '%s'.", source_item.text)
+            word_audio = self._generate_one_audio(
+                source_item=source_item,
+                text=card.dutch_word,
+                field_name="Word_Audio",
+                label="word",
+                audio_failed_items=audio_failed_items,
+            )
+            example_audio = self._generate_one_audio(
+                source_item=source_item,
+                text=card.example_sentence_nl,
+                field_name="Example_Audio",
+                label="example",
+                audio_failed_items=audio_failed_items,
+            )
+            if word_audio is not None or example_audio is not None:
+                audio_by_guid[build_note_guid(source_item)] = NoteAudio(
+                    word_audio=word_audio,
+                    example_audio=example_audio,
+                )
+        return audio_by_guid
+
+    def _generate_one_audio(
+        self,
+        *,
+        source_item: SourceItem,
+        text: str,
+        field_name: str,
+        label: str,
+        audio_failed_items: list[AudioFailedItem],
+    ) -> Path | None:
+        """Generate one audio file and record non-fatal failures."""
+        if self.audio_generator is None:
+            return None
+
+        try:
+            return self.audio_generator.generate_audio(text, label=label)
+        except (AudioGenerationError, OSError, ValueError) as exc:
+            LOGGER.error("Failed to generate %s for '%s': %s", field_name, source_item.text, exc)
+            audio_failed_items.append(
+                AudioFailedItem(
+                    source_word=source_item.text,
+                    field_name=field_name,
+                    reason=str(exc),
+                )
+            )
+            return None
 
     def _generate_pending_items(
         self,
