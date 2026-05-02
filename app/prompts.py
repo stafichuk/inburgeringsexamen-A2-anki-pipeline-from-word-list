@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-04-03.1"
+PROMPT_VERSION = "2026-05-02.1"
 
 
 def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
@@ -46,7 +46,8 @@ Rules:
 - Always fill all common required fields.
 - For nouns, include article, plural_form, and front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'школа (множественное число?)'.
 - For verbs, include verb_forms with infinitive, present_tense, past_tense, past_participle, and optionally perfect_example, separable_prefix, conjugation_notes.
-- For adjectives, include adjective_forms with base_form, de_form, het_form, and optionally learner_note.
+- For regular adjectives, set adjective_forms to null. Adjective endings are predictable and should not be listed.
+- For indeclinable adjectives only, include adjective_forms with onverbuigbaar_example, e.g. "gouden ring", and optionally learner_note. The example must show the adjective in a natural Dutch noun phrase.
 - For non-relevant optional fields, use null.
 - Keep lesson_topic concise and reflect the lesson/topic context being used for this card.
 - tags should be a JSON array of short machine-friendly strings.

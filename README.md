@@ -150,7 +150,7 @@ Core fields:
 POS-specific fields:
 - nouns: `article`, `plural_form`, `front_hint`
 - verbs: `verb_forms`
-- adjectives: `adjective_forms`
+- adjectives: `adjective_forms` only for onverbuigbare adjectives; regular adjectives use `null`
 
 ### Sample JSON Object
 ```json
@@ -194,6 +194,8 @@ The generated note type contains these fields:
 Card behavior:
 - Front side is Russian-driven.
 - Noun cards explicitly prompt plural recall.
+- Regular adjective cards do not list predictable adjective endings.
+- Onverbuigbare adjectives show a short note and example phrase, such as `gouden ring`.
 - Back side shows Dutch, IPA, grammar details, then the example sentence in this order:
   1. Russian translation
   2. Dutch sentence

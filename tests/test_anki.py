@@ -2,9 +2,17 @@ import json
 from pathlib import Path
 import zipfile
 
-from app.anki import NOTE_FIELDS, NoteAudio, build_deck_package, build_note, build_note_guid, create_note_model
+from app.anki import (
+    NOTE_FIELDS,
+    NoteAudio,
+    build_deck_package,
+    build_note,
+    build_note_guid,
+    create_note_model,
+    format_adjective_forms,
+)
 from app.config import DeckSettings
-from app.models import GeneratedCard, SourceItem, VerbForms
+from app.models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
 
 
 def make_card(word: str = "leren") -> GeneratedCard:
@@ -55,7 +63,7 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "{{POS}}" not in template
     assert "Voorbeeld:" in template
     assert "Werkwoordsvormen:" in template
-    assert "Bijvoeglijke vormen:" in template
+    assert "Bijvoeglijk naamwoord:" in template
     assert "Lesson:" not in template
     assert "Topic:" not in template
     assert "Article:" not in template
@@ -75,6 +83,17 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
 
     assert note.fields[11] == " [sound:word.mp3]"
     assert note.fields[12] == " [sound:example.mp3]"
+
+
+def test_format_adjective_forms_only_shows_indeclinable_note() -> None:
+    formatted = format_adjective_forms(
+        AdjectiveForms(
+            onverbuigbaar_example="gouden ring",
+            learner_note="Stofadjectief op -en.",
+        )
+    )
+
+    assert formatted == "Onverbuigbaar: ja<br>Voorbeeld: gouden ring<br>Note: Stofadjectief op -en."
 
 
 def test_deck_package_includes_audio_media(tmp_path: Path) -> None:

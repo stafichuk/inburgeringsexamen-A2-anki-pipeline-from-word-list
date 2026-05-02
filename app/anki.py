@@ -103,7 +103,7 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
-{{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijke vormen:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
+{{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijk naamwoord:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="example">
   <div class="label">Voorbeeld:</div>
   <div class="example-ru">{{Example_RU}}</div>
@@ -145,9 +145,8 @@ def format_adjective_forms(adjective_forms: AdjectiveForms | None) -> str:
     if adjective_forms is None:
         return ""
     lines = [
-        f"Base form: {adjective_forms.base_form}",
-        f"de-word form: {adjective_forms.de_form}",
-        f"het-word form: {adjective_forms.het_form}",
+        "Onverbuigbaar: ja",
+        f"Voorbeeld: {adjective_forms.onverbuigbaar_example}",
     ]
     if adjective_forms.learner_note:
         lines.append(f"Note: {adjective_forms.learner_note}")

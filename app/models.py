@@ -57,19 +57,19 @@ class VerbForms(StrictModel):
 
 
 class AdjectiveForms(StrictModel):
-    """Adjective forms needed for de/het training."""
+    """Exceptional adjective note, present only for indeclinable adjectives."""
 
-    base_form: str
-    de_form: str
-    het_form: str
+    onverbuigbaar_example: str = Field(
+        description="Short Dutch noun phrase showing the indeclinable adjective, e.g. 'gouden ring'."
+    )
     learner_note: str | None = None
 
-    @field_validator("base_form", "de_form", "het_form")
+    @field_validator("onverbuigbaar_example")
     @classmethod
     def ensure_required_text(cls, value: str) -> str:
-        """Ensure adjective form fields are non-empty strings."""
+        """Ensure the indeclinable adjective example is non-empty."""
         if not value.strip():
-            raise ValueError("adjective form fields must not be empty")
+            raise ValueError("onverbuigbaar_example must not be empty")
         return value
 
     @field_validator("learner_note")
@@ -171,8 +171,6 @@ class GeneratedCard(StrictModel):
             return self
 
         if self.part_of_speech == PartOfSpeech.ADJECTIVE:
-            if self.adjective_forms is None:
-                raise ValueError("adjectives must include adjective_forms")
             if self.article or self.plural_form or self.front_hint:
                 raise ValueError("adjectives must not include noun-only fields")
             if self.verb_forms is not None:
