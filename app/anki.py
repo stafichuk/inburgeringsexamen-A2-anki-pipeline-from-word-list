@@ -102,7 +102,6 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <hr id="answer">
 <div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
-<div class="meta"><span class="label">Woordsoort:</span> {{POS}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijke vormen:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="example">

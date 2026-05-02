@@ -51,7 +51,8 @@ def test_note_model_template_matches_updated_layout() -> None:
     template = model.templates[0]["afmt"]
     css = model.css
 
-    assert "Woordsoort:" in template
+    assert "Woordsoort:" not in template
+    assert "{{POS}}" not in template
     assert "Voorbeeld:" in template
     assert "Werkwoordsvormen:" in template
     assert "Bijvoeglijke vormen:" in template
