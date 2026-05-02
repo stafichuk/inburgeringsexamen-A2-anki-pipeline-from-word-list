@@ -84,18 +84,15 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
                 "afmt": """
 {{FrontSide}}
 <hr id="answer">
-<div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
+<div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijke vormen:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="example">
   <div class="label">Voorbeeld:</div>
   <div class="example-ru">{{Example_RU}}</div>
-  <div class="example-nl">{{Example_NL}}</div>
+  <div class="example-nl">{{Example_NL}}{{Example_Audio}}</div>
 </div>
-<div class="meta"><span class="label">Woordsoort:</span> {{POS}}</div>
-{{#Word_Audio}}<div class="audio">{{Word_Audio}}</div>{{/Word_Audio}}
-{{#Example_Audio}}<div class="audio">{{Example_Audio}}</div>{{/Example_Audio}}
                 """.strip(),
             }
         ],
