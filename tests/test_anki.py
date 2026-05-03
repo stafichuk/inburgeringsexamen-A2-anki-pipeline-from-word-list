@@ -5,6 +5,7 @@ import zipfile
 from app.anki import (
     NOTE_FIELDS,
     NoteAudio,
+    build_front,
     build_deck_package,
     build_note,
     build_note_guid,
@@ -69,6 +70,24 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "Article:" not in template
     assert "(meervoud {{Plural}})" in template
     assert "color: #6b1d1d;" not in css
+
+
+def test_build_front_does_not_add_plural_prompt_for_uncountable_noun() -> None:
+    card = GeneratedCard(
+        dutch_word="melk",
+        russian_translation="молоко",
+        part_of_speech="noun",
+        ipa_transcription="mɛlk",
+        example_sentence_nl="Ik drink melk.",
+        example_sentence_ru="Я пью молоко.",
+        lesson_topic="Eten en drinken",
+        tags=["food"],
+        article="de",
+        plural_form=None,
+        front_hint="молоко",
+    )
+
+    assert build_front(card) == "молоко"
 
 
 def test_build_note_includes_sound_references(tmp_path: Path) -> None:

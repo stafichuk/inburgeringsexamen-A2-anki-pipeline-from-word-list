@@ -24,18 +24,42 @@ def test_generated_card_accepts_valid_noun_payload() -> None:
     assert card.plural_form == "scholen"
 
 
-def test_generated_card_rejects_noun_without_plural() -> None:
+def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None:
     payload = {
-        "dutch_word": "school",
-        "russian_translation": "школа",
+        "dutch_word": "melk",
+        "russian_translation": "молоко",
         "part_of_speech": "noun",
-        "ipa_transcription": "sxoːl",
-        "example_sentence_nl": "Mijn school is dichtbij.",
-        "example_sentence_ru": "Моя школа находится рядом.",
-        "lesson_topic": "De school",
-        "tags": ["school"],
+        "ipa_transcription": "mɛlk",
+        "example_sentence_nl": "Ik drink melk.",
+        "example_sentence_ru": "Я пью молоко.",
+        "lesson_topic": "Eten en drinken",
+        "tags": ["food"],
         "article": "de",
-        "front_hint": "школа (множественное число?)",
+        "plural_form": None,
+        "front_hint": "молоко",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert card.plural_form is None
+    assert card.front_hint == "молоко"
+
+
+def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
+    payload = {
+        "dutch_word": "melk",
+        "russian_translation": "молоко",
+        "part_of_speech": "noun",
+        "ipa_transcription": "mɛlk",
+        "example_sentence_nl": "Ik drink melk.",
+        "example_sentence_ru": "Я пью молоко.",
+        "lesson_topic": "Eten en drinken",
+        "tags": ["food"],
+        "article": "de",
+        "plural_form": None,
+        "front_hint": "молоко (множественное число?)",
         "verb_forms": None,
         "adjective_forms": None,
     }
@@ -43,7 +67,7 @@ def test_generated_card_rejects_noun_without_plural() -> None:
     try:
         GeneratedCard.model_validate(payload)
     except ValidationError as exc:
-        assert "plural_form" in str(exc)
+        assert "plural recall" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("validation should have failed")
 

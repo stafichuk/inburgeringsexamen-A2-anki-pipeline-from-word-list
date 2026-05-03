@@ -32,6 +32,8 @@ NOTE_FIELDS = [
     "SourceWord",
 ]
 
+PLURAL_PROMPT_SUFFIX = " (множественное число?)"
+
 DEFAULT_CSS = """
 .card {
   font-family: Arial, sans-serif;
@@ -156,7 +158,12 @@ def format_adjective_forms(adjective_forms: AdjectiveForms | None) -> str:
 def build_front(card: GeneratedCard) -> str:
     """Build the front-side Russian prompt."""
     if card.part_of_speech.value == "noun":
-        return html.escape(card.front_hint or f"{card.russian_translation} (множественное число?)")
+        hint = card.front_hint or card.russian_translation
+        if card.plural_form:
+            return html.escape(card.front_hint or f"{card.russian_translation}{PLURAL_PROMPT_SUFFIX}")
+        if hint.endswith(PLURAL_PROMPT_SUFFIX):
+            hint = hint[: -len(PLURAL_PROMPT_SUFFIX)]
+        return html.escape(hint)
     return html.escape(card.russian_translation)
 
 

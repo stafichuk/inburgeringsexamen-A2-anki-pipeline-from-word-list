@@ -148,7 +148,8 @@ Core fields:
 - `tags`
 
 POS-specific fields:
-- nouns: `article`, `plural_form`, `front_hint`
+- countable nouns: `article`, `plural_form`, `front_hint`
+- uncountable nouns: `article`, `front_hint`, with `plural_form: null`
 - verbs: `verb_forms`
 - adjectives: `adjective_forms` only for onverbuigbare adjectives; regular adjectives use `null`
 
@@ -193,7 +194,8 @@ The generated note type contains these fields:
 
 Card behavior:
 - Front side is Russian-driven.
-- Noun cards explicitly prompt plural recall.
+- Countable noun cards explicitly prompt plural recall.
+- Uncountable noun cards keep the front hint plain and do not add `(множественное число?)`.
 - Regular adjective cards do not list predictable adjective endings.
 - Onverbuigbare adjectives show a short note and example phrase, such as `gouden ring`.
 - Back side shows Dutch, IPA, grammar details, then the example sentence in this order:

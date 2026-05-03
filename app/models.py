@@ -151,10 +151,10 @@ class GeneratedCard(StrictModel):
         if self.part_of_speech == PartOfSpeech.NOUN:
             if self.article not in {"de", "het"}:
                 raise ValueError("nouns must include article 'de' or 'het'")
-            if not self.plural_form:
-                raise ValueError("nouns must include plural_form")
             if not self.front_hint:
                 raise ValueError("nouns must include front_hint")
+            if self.plural_form is None and "множественное число" in self.front_hint:
+                raise ValueError("uncountable nouns must not prompt plural recall")
             if self.verb_forms is not None:
                 raise ValueError("nouns must not include verb_forms")
             if self.adjective_forms is not None:
