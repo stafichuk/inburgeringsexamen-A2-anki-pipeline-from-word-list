@@ -51,6 +51,21 @@ def make_card(word: str) -> GeneratedCard:
     )
 
 
+def make_noun_card(word: str) -> GeneratedCard:
+    return GeneratedCard(
+        dutch_word=f"de {word}",
+        russian_translation="школа",
+        part_of_speech="noun",
+        ipa_transcription="sxoːl",
+        example_sentence_nl=f"Mijn {word} is dichtbij.",
+        example_sentence_ru="Моя школа находится рядом.",
+        lesson_topic="De school",
+        tags=["school", "noun"],
+        plural_form="scholen",
+        front_hint="школа (множественное число?)",
+    )
+
+
 class FakeClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -58,6 +73,12 @@ class FakeClient:
     def generate_card(self, source_item: SourceItem) -> GeneratedCard:
         self.calls += 1
         return make_card(source_item.text)
+
+
+class NounClient(FakeClient):
+    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
+        self.calls += 1
+        return make_noun_card(source_item.text)
 
 
 class PartiallyFailingClient(FakeClient):
@@ -207,6 +228,29 @@ def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypat
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.word_audio is not None
     assert audio.example_audio is not None
+
+
+def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("school\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    audio_generator = FakeAudioGenerator(tmp_path / "audio")
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=NounClient(),
+        audio_generator=audio_generator,
+    ).run(input_path=input_path, output_path=output_path)
+
+    assert result.generated_items == 1
+    assert audio_generator.calls[0] == ("word", "de school")
 
 
 def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) -> None:

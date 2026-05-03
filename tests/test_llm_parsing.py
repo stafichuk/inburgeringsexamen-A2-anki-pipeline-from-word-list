@@ -13,7 +13,6 @@ VALID_JSON = """
   "example_sentence_ru": "Я учу нидерландский в школе.",
   "lesson_topic": "De school",
   "tags": ["school", "verb"],
-  "article": null,
   "plural_form": null,
   "front_hint": null,
   "verb_forms": {

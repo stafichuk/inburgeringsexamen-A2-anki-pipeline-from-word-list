@@ -148,15 +148,15 @@ Core fields:
 - `tags`
 
 POS-specific fields:
-- countable nouns: `article`, `plural_form`, `front_hint`
-- uncountable nouns: `article`, `front_hint`, with `plural_form: null`
+- countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`
+- uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null`
 - verbs: `verb_forms`
 - adjectives: `adjective_forms` only for onverbuigbare adjectives; regular adjectives use `null`
 
 ### Sample JSON Object
 ```json
 {
-  "dutch_word": "school",
+  "dutch_word": "de school",
   "russian_translation": "школа",
   "part_of_speech": "noun",
   "ipa_transcription": "sxoːl",
@@ -164,7 +164,6 @@ POS-specific fields:
   "example_sentence_ru": "Моя школа находится рядом.",
   "lesson_topic": "De school",
   "tags": ["school", "lesson-3", "noun"],
-  "article": "de",
   "plural_form": "scholen",
   "front_hint": "школа (множественное число?)",
   "verb_forms": null,
@@ -180,7 +179,6 @@ The generated note type contains these fields:
 - `Translation_RU`
 - `IPA`
 - `POS`
-- `Article`
 - `Plural`
 - `Verb_Forms`
 - `Adjective_Forms`

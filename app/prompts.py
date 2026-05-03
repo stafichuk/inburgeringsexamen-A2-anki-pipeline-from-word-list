@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-05-03.1"
+PROMPT_VERSION = "2026-05-03.2"
 
 
 def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
@@ -44,8 +44,8 @@ Rules:
 - If a topic is provided, prefer an example sentence that fits that topic.
 - If no specific topic is provided, use a neutral everyday-learning context.
 - Always fill all common required fields.
-- For countable nouns, include article, plural_form, and front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'школа (множественное число?)'.
-- For uncountable nouns, include article and front_hint, set plural_form to null, and do not add '(множественное число?)' to front_hint.
+- For countable nouns, include the article directly in dutch_word, e.g. "de school" or "het huis"; include plural_form and front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'школа (множественное число?)'.
+- For uncountable nouns, include the article directly in dutch_word, include front_hint, set plural_form to null, and do not add '(множественное число?)' to front_hint.
 - For verbs, include verb_forms with infinitive, present_tense, past_tense, past_participle, and optionally perfect_example, separable_prefix, conjugation_notes.
 - For regular adjectives, set adjective_forms to null. Adjective endings are predictable and should not be listed.
 - For indeclinable adjectives only, include adjective_forms with onverbuigbaar_example, e.g. "gouden ring", and optionally learner_note. The example must show the adjective in a natural Dutch noun phrase.

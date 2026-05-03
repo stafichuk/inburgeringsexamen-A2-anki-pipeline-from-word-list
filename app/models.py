@@ -109,7 +109,6 @@ class GeneratedCard(StrictModel):
     example_sentence_ru: str
     lesson_topic: str
     tags: list[str] = Field(default_factory=list)
-    article: str | None = None
     plural_form: str | None = None
     front_hint: str | None = None
     verb_forms: VerbForms | None = None
@@ -130,7 +129,7 @@ class GeneratedCard(StrictModel):
             raise ValueError("required text fields must not be empty")
         return value
 
-    @field_validator("article", "plural_form", "front_hint")
+    @field_validator("plural_form", "front_hint")
     @classmethod
     def normalize_optional_common_fields(cls, value: str | None) -> str | None:
         """Reject blank optional noun fields."""
@@ -149,8 +148,9 @@ class GeneratedCard(StrictModel):
     def validate_pos_specific_fields(self) -> "GeneratedCard":
         """Require only the grammar fields relevant to the inferred POS."""
         if self.part_of_speech == PartOfSpeech.NOUN:
-            if self.article not in {"de", "het"}:
-                raise ValueError("nouns must include article 'de' or 'het'")
+            word = self.dutch_word.lower()
+            if not (word.startswith("de ") or word.startswith("het ")):
+                raise ValueError("nouns must include article 'de' or 'het' in dutch_word")
             if not self.front_hint:
                 raise ValueError("nouns must include front_hint")
             if self.plural_form is None and "множественное число" in self.front_hint:
@@ -164,20 +164,20 @@ class GeneratedCard(StrictModel):
         if self.part_of_speech == PartOfSpeech.VERB:
             if self.verb_forms is None:
                 raise ValueError("verbs must include verb_forms")
-            if self.article or self.plural_form or self.front_hint:
+            if self.plural_form or self.front_hint:
                 raise ValueError("verbs must not include noun-only fields")
             if self.adjective_forms is not None:
                 raise ValueError("verbs must not include adjective_forms")
             return self
 
         if self.part_of_speech == PartOfSpeech.ADJECTIVE:
-            if self.article or self.plural_form or self.front_hint:
+            if self.plural_form or self.front_hint:
                 raise ValueError("adjectives must not include noun-only fields")
             if self.verb_forms is not None:
                 raise ValueError("adjectives must not include verb_forms")
             return self
 
-        if self.article or self.plural_form or self.front_hint:
+        if self.plural_form or self.front_hint:
             raise ValueError("non-nouns must not include noun-only fields")
         if self.verb_forms is not None:
             raise ValueError("non-verbs must not include verb_forms")

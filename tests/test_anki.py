@@ -62,6 +62,7 @@ def test_note_model_template_matches_updated_layout() -> None:
 
     assert "Woordsoort:" not in template
     assert "{{POS}}" not in template
+    assert "{{Article}}" not in template
     assert "Voorbeeld:" in template
     assert "Werkwoordsvormen:" in template
     assert "Bijvoeglijk naamwoord:" in template
@@ -74,7 +75,7 @@ def test_note_model_template_matches_updated_layout() -> None:
 
 def test_build_front_does_not_add_plural_prompt_for_uncountable_noun() -> None:
     card = GeneratedCard(
-        dutch_word="melk",
+        dutch_word="de melk",
         russian_translation="молоко",
         part_of_speech="noun",
         ipa_transcription="mɛlk",
@@ -82,12 +83,33 @@ def test_build_front_does_not_add_plural_prompt_for_uncountable_noun() -> None:
         example_sentence_ru="Я пью молоко.",
         lesson_topic="Eten en drinken",
         tags=["food"],
-        article="de",
         plural_form=None,
         front_hint="молоко",
     )
 
     assert build_front(card) == "молоко"
+
+
+def test_build_note_includes_article_in_word_field_for_nouns() -> None:
+    source_item = SourceItem(text="school", topic="De school", lesson="Lesson 3", exam_level="A2")
+    model = create_note_model(DeckSettings())
+    card = GeneratedCard(
+        dutch_word="de school",
+        russian_translation="школа",
+        part_of_speech="noun",
+        ipa_transcription="sxoːl",
+        example_sentence_nl="Mijn school is dichtbij.",
+        example_sentence_ru="Моя школа находится рядом.",
+        lesson_topic="De school",
+        tags=["school"],
+        plural_form="scholen",
+        front_hint="школа (множественное число?)",
+    )
+
+    note = build_note(model, source_item, card)
+
+    assert "Article" not in NOTE_FIELDS
+    assert note.fields[1] == "de school"
 
 
 def test_build_note_includes_sound_references(tmp_path: Path) -> None:
@@ -100,8 +122,8 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
 
     note = build_note(model, source_item, make_card(), audio=audio)
 
-    assert note.fields[11] == " [sound:word.mp3]"
-    assert note.fields[12] == " [sound:example.mp3]"
+    assert note.fields[10] == " [sound:word.mp3]"
+    assert note.fields[11] == " [sound:example.mp3]"
 
 
 def test_format_adjective_forms_only_shows_indeclinable_note() -> None:

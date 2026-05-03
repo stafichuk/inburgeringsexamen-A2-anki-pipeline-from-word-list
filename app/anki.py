@@ -19,7 +19,6 @@ NOTE_FIELDS = [
     "Translation_RU",
     "IPA",
     "POS",
-    "Article",
     "Plural",
     "Verb_Forms",
     "Adjective_Forms",
@@ -102,7 +101,7 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
                 "afmt": """
 {{FrontSide}}
 <hr id="answer">
-<div class="word">{{#Article}}{{Article}} {{/Article}}{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
+<div class="word">{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijk naamwoord:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
@@ -204,7 +203,6 @@ def build_note(
         html.escape(card.russian_translation),
         html.escape(card.ipa_transcription),
         format_part_of_speech(card),
-        html.escape(card.article or ""),
         html.escape(card.plural_form or ""),
         format_verb_forms(card.verb_forms),
         format_adjective_forms(card.adjective_forms),

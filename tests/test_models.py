@@ -5,7 +5,7 @@ from app.models import GeneratedCard
 
 def test_generated_card_accepts_valid_noun_payload() -> None:
     payload = {
-        "dutch_word": "school",
+        "dutch_word": "de school",
         "russian_translation": "школа",
         "part_of_speech": "noun",
         "ipa_transcription": "sxoːl",
@@ -13,7 +13,6 @@ def test_generated_card_accepts_valid_noun_payload() -> None:
         "example_sentence_ru": "Моя школа находится рядом.",
         "lesson_topic": "De school",
         "tags": ["school", "lesson-3"],
-        "article": "de",
         "plural_form": "scholen",
         "front_hint": "школа (множественное число?)",
         "verb_forms": None,
@@ -26,7 +25,7 @@ def test_generated_card_accepts_valid_noun_payload() -> None:
 
 def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None:
     payload = {
-        "dutch_word": "melk",
+        "dutch_word": "de melk",
         "russian_translation": "молоко",
         "part_of_speech": "noun",
         "ipa_transcription": "mɛlk",
@@ -34,7 +33,6 @@ def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None
         "example_sentence_ru": "Я пью молоко.",
         "lesson_topic": "Eten en drinken",
         "tags": ["food"],
-        "article": "de",
         "plural_form": None,
         "front_hint": "молоко",
         "verb_forms": None,
@@ -49,7 +47,7 @@ def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None
 
 def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
     payload = {
-        "dutch_word": "melk",
+        "dutch_word": "de melk",
         "russian_translation": "молоко",
         "part_of_speech": "noun",
         "ipa_transcription": "mɛlk",
@@ -57,7 +55,6 @@ def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
         "example_sentence_ru": "Я пью молоко.",
         "lesson_topic": "Eten en drinken",
         "tags": ["food"],
-        "article": "de",
         "plural_form": None,
         "front_hint": "молоко (множественное число?)",
         "verb_forms": None,
@@ -72,6 +69,30 @@ def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
         raise AssertionError("validation should have failed")
 
 
+def test_generated_card_rejects_noun_without_article_in_word() -> None:
+    payload = {
+        "dutch_word": "school",
+        "russian_translation": "школа",
+        "part_of_speech": "noun",
+        "ipa_transcription": "sxoːl",
+        "example_sentence_nl": "Mijn school is dichtbij.",
+        "example_sentence_ru": "Моя школа находится рядом.",
+        "lesson_topic": "De school",
+        "tags": ["school", "lesson-3"],
+        "plural_form": "scholen",
+        "front_hint": "школа (множественное число?)",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    try:
+        GeneratedCard.model_validate(payload)
+    except ValidationError as exc:
+        assert "in dutch_word" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
 def test_generated_card_accepts_regular_adjective_without_adjective_forms() -> None:
     payload = {
         "dutch_word": "mooi",
@@ -82,7 +103,6 @@ def test_generated_card_accepts_regular_adjective_without_adjective_forms() -> N
         "example_sentence_ru": "Это красивый дом.",
         "lesson_topic": "Het huis",
         "tags": ["house", "adjective"],
-        "article": None,
         "plural_form": None,
         "front_hint": None,
         "verb_forms": None,
@@ -104,7 +124,6 @@ def test_generated_card_accepts_indeclinable_adjective_example() -> None:
         "example_sentence_ru": "Она носит золотое кольцо.",
         "lesson_topic": "Kleding",
         "tags": ["clothing", "adjective"],
-        "article": None,
         "plural_form": None,
         "front_hint": None,
         "verb_forms": None,
