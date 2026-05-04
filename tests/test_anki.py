@@ -5,8 +5,9 @@ import zipfile
 from app.anki import (
     NOTE_FIELDS,
     NoteAudio,
-    build_front,
     build_deck_package,
+    build_example_slot_fields,
+    build_front,
     build_note,
     build_note_guid,
     create_note_model,
@@ -17,14 +18,33 @@ from app.models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
 
 
 def make_card(word: str = "leren") -> GeneratedCard:
+    present_form = "leer" if word == "leren" else word
     return GeneratedCard(
         dutch_word=word,
         russian_translation="учиться",
         part_of_speech="verb",
         ipa_transcription="ˈleːrə(n)",
-        example_sentence_nl="Ik leer Nederlands op school.",
-        example_sentence_ru="Я учу нидерландский в школе.",
         lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "present_tense",
+                "form": present_form,
+                "example_sentence_nl": f"Ik {present_form} Nederlands op school.",
+                "example_sentence_ru": "Я учу нидерландский в школе.",
+            },
+            {
+                "kind": "past_tense",
+                "form": "leerde",
+                "example_sentence_nl": "Ik leerde gisteren nieuwe woorden.",
+                "example_sentence_ru": "Вчера я учил новые слова.",
+            },
+            {
+                "kind": "past_participle",
+                "form": "geleerd",
+                "example_sentence_nl": "Ik heb Nederlands geleerd.",
+                "example_sentence_ru": "Я выучил нидерландский.",
+            },
+        ],
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
@@ -53,6 +73,11 @@ def test_note_model_contains_expected_fields() -> None:
     model = create_note_model(DeckSettings())
     model_field_names = [field["name"] for field in model.fields]
     assert model_field_names == NOTE_FIELDS
+    assert "Example_NL" not in model_field_names
+    assert "Example_RU" not in model_field_names
+    assert "Example_Audio" not in model_field_names
+    assert "Example_1_Form" in model_field_names
+    assert "Example_3_Audio" in model_field_names
 
 
 def test_note_model_template_matches_updated_layout() -> None:
@@ -63,7 +88,14 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "Woordsoort:" not in template
     assert "{{POS}}" not in template
     assert "{{Article}}" not in template
-    assert "Voorbeeld:" in template
+    assert "Voorbeelden:" in template
+    assert "{{Example_NL}}" not in template
+    assert "{{Example_RU}}" not in template
+    assert "{{Example_Audio}}" not in template
+    assert "{{Example_1_Form}}" in template
+    assert "{{Example_1_NL}}{{Example_1_Audio}}" in template
+    assert "{{Example_2_NL}}{{Example_2_Audio}}" in template
+    assert "{{Example_3_NL}}{{Example_3_Audio}}" in template
     assert "Werkwoordsvormen:" in template
     assert "Bijvoeglijk naamwoord:" in template
     assert "Lesson:" not in template
@@ -79,9 +111,15 @@ def test_build_front_does_not_add_plural_prompt_for_uncountable_noun() -> None:
         russian_translation="молоко",
         part_of_speech="noun",
         ipa_transcription="mɛlk",
-        example_sentence_nl="Ik drink melk.",
-        example_sentence_ru="Я пью молоко.",
         lesson_topic="Eten en drinken",
+        form_examples=[
+            {
+                "kind": "default",
+                "form": "melk",
+                "example_sentence_nl": "Ik drink melk.",
+                "example_sentence_ru": "Я пью молоко.",
+            }
+        ],
         tags=["food"],
         plural_form=None,
         front_hint="молоко",
@@ -98,9 +136,21 @@ def test_build_note_includes_article_in_word_field_for_nouns() -> None:
         russian_translation="школа",
         part_of_speech="noun",
         ipa_transcription="sxoːl",
-        example_sentence_nl="Mijn school is dichtbij.",
-        example_sentence_ru="Моя школа находится рядом.",
         lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "singular",
+                "form": "de school",
+                "example_sentence_nl": "De school is dichtbij.",
+                "example_sentence_ru": "Школа находится рядом.",
+            },
+            {
+                "kind": "plural",
+                "form": "scholen",
+                "example_sentence_nl": "De scholen zijn dichtbij.",
+                "example_sentence_ru": "Школы находятся рядом.",
+            },
+        ],
         tags=["school"],
         plural_form="scholen",
         front_hint="школа (множественное число?)",
@@ -109,7 +159,7 @@ def test_build_note_includes_article_in_word_field_for_nouns() -> None:
     note = build_note(model, source_item, card)
 
     assert "Article" not in NOTE_FIELDS
-    assert note.fields[1] == "de school"
+    assert note.fields[NOTE_FIELDS.index("Word_NL")] == "de school"
 
 
 def test_build_note_includes_sound_references(tmp_path: Path) -> None:
@@ -117,33 +167,71 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
     model = create_note_model(DeckSettings())
     audio = NoteAudio(
         word_audio=tmp_path / "word.mp3",
-        example_audio=tmp_path / "example.mp3",
+        example_audios=(
+            tmp_path / "present.mp3",
+            tmp_path / "past.mp3",
+            tmp_path / "participle.mp3",
+        ),
     )
 
     note = build_note(model, source_item, make_card(), audio=audio)
 
-    assert note.fields[10] == " [sound:word.mp3]"
-    assert note.fields[11] == " [sound:example.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Word_Audio")] == " [sound:word.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Example_1_Audio")] == " [sound:present.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Example_2_Audio")] == " [sound:past.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Example_3_Audio")] == " [sound:participle.mp3]"
+
+
+def test_build_example_slot_fields_keeps_each_audio_next_to_matching_sentence(tmp_path: Path) -> None:
+    fields = build_example_slot_fields(
+        make_card(),
+        NoteAudio(
+            example_audios=(
+                tmp_path / "present.mp3",
+                tmp_path / "past.mp3",
+                tmp_path / "participle.mp3",
+            )
+        ),
+    )
+
+    assert fields == [
+        "Tegenwoordige tijd: leer",
+        "Ik leer Nederlands op school.",
+        "Я учу нидерландский в школе.",
+        " [sound:present.mp3]",
+        "Verleden tijd: leerde",
+        "Ik leerde gisteren nieuwe woorden.",
+        "Вчера я учил новые слова.",
+        " [sound:past.mp3]",
+        "Voltooid deelwoord: geleerd",
+        "Ik heb Nederlands geleerd.",
+        "Я выучил нидерландский.",
+        " [sound:participle.mp3]",
+    ]
 
 
 def test_format_adjective_forms_only_shows_indeclinable_note() -> None:
     formatted = format_adjective_forms(
         AdjectiveForms(
-            onverbuigbaar_example="gouden ring",
+            onverbuigbaar_example="de gouden ring",
             learner_note="Stofadjectief op -en.",
         )
     )
 
-    assert formatted == "Onverbuigbaar: ja<br>Voorbeeld: gouden ring<br>Note: Stofadjectief op -en."
+    assert formatted == "Onverbuigbaar: ja<br>Voorbeeld: de gouden ring<br>Note: Stofadjectief op -en."
 
 
 def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
     settings = DeckSettings()
-    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
+    source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3")
     word_audio = tmp_path / "word.mp3"
-    example_audio = tmp_path / "example.mp3"
+    present_audio = tmp_path / "present.mp3"
+    past_audio = tmp_path / "past.mp3"
+    participle_audio = tmp_path / "participle.mp3"
     word_audio.write_bytes(b"word")
-    example_audio.write_bytes(b"example")
+    present_audio.write_bytes(b"present")
+    past_audio.write_bytes(b"past")
+    participle_audio.write_bytes(b"participle")
     output_path = tmp_path / "school.apkg"
 
     build_deck_package(
@@ -154,7 +242,7 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
         audio_by_guid={
             build_note_guid(source_item): NoteAudio(
                 word_audio=word_audio,
-                example_audio=example_audio,
+                example_audios=(present_audio, past_audio, participle_audio),
             )
         },
     )
@@ -162,4 +250,4 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
     with zipfile.ZipFile(output_path) as package:
         media = json.loads(package.read("media").decode("utf-8"))
 
-    assert sorted(media.values()) == ["example.mp3", "word.mp3"]
+    assert sorted(media.values()) == ["participle.mp3", "past.mp3", "present.mp3", "word.mp3"]

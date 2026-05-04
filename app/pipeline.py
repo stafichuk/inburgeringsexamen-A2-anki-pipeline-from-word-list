@@ -164,17 +164,20 @@ class DeckGenerationPipeline:
                 label="word",
                 audio_failed_items=audio_failed_items,
             )
-            example_audio = self._generate_one_audio(
-                source_item=source_item,
-                text=card.example_sentence_nl,
-                field_name="Example_Audio",
-                label="example",
-                audio_failed_items=audio_failed_items,
+            example_audios = tuple(
+                self._generate_one_audio(
+                    source_item=source_item,
+                    text=example.example_sentence_nl,
+                    field_name=f"Example_{index}_Audio",
+                    label=f"example-{example.kind.value.replace('_', '-')}",
+                    audio_failed_items=audio_failed_items,
+                )
+                for index, example in enumerate(card.ordered_form_examples(), start=1)
             )
-            if word_audio is not None or example_audio is not None:
+            if word_audio is not None or any(example_audio is not None for example_audio in example_audios):
                 audio_by_guid[build_note_guid(source_item)] = NoteAudio(
                     word_audio=word_audio,
-                    example_audio=example_audio,
+                    example_audios=example_audios,
                 )
         return audio_by_guid
 

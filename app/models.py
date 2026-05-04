@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -26,6 +27,64 @@ class PartOfSpeech(str, Enum):
     PHRASE = "phrase"
     EXPRESSION = "expression"
     OTHER = "other"
+
+
+class FormExampleKind(str, Enum):
+    """Kinds of form-specific examples rendered on learner cards."""
+
+    SINGULAR = "singular"
+    PLURAL = "plural"
+    DEFAULT = "default"
+    PRESENT_TENSE = "present_tense"
+    PAST_TENSE = "past_tense"
+    PAST_PARTICIPLE = "past_participle"
+    BASE_FORM = "base_form"
+    E_FORM = "e_form"
+    SINGLE_FORM = "single_form"
+
+
+FORM_EXAMPLE_KIND_ORDER = {
+    FormExampleKind.SINGULAR: 10,
+    FormExampleKind.PLURAL: 20,
+    FormExampleKind.DEFAULT: 30,
+    FormExampleKind.PRESENT_TENSE: 40,
+    FormExampleKind.PAST_TENSE: 50,
+    FormExampleKind.PAST_PARTICIPLE: 60,
+    FormExampleKind.BASE_FORM: 70,
+    FormExampleKind.E_FORM: 80,
+    FormExampleKind.SINGLE_FORM: 90,
+}
+
+
+def _word_tokens(value: str) -> list[str]:
+    """Extract normalized word tokens for loose Dutch form matching."""
+    return re.findall(r"[\wÀ-ÿ'-]+", value.lower())
+
+
+class FormExample(StrictModel):
+    """One example sentence for one visible word form."""
+
+    kind: FormExampleKind
+    form: str
+    example_sentence_nl: str
+    example_sentence_ru: str
+
+    @field_validator("form", "example_sentence_nl", "example_sentence_ru")
+    @classmethod
+    def ensure_required_text(cls, value: str) -> str:
+        """Ensure example fields are non-empty strings."""
+        if not value.strip():
+            raise ValueError("form example fields must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def validate_form_appears_in_example(self) -> "FormExample":
+        """Require the selected form to be visible in the Dutch example."""
+        form_tokens = set(_word_tokens(self.form))
+        example_tokens = set(_word_tokens(self.example_sentence_nl))
+        if form_tokens and not form_tokens.issubset(example_tokens):
+            raise ValueError("form must appear in example_sentence_nl")
+        return self
 
 
 class VerbForms(StrictModel):
@@ -105,9 +164,8 @@ class GeneratedCard(StrictModel):
     russian_translation: str
     part_of_speech: PartOfSpeech
     ipa_transcription: str
-    example_sentence_nl: str
-    example_sentence_ru: str
     lesson_topic: str
+    form_examples: list[FormExample] = Field(min_length=1, max_length=3)
     tags: list[str] = Field(default_factory=list)
     plural_form: str | None = None
     front_hint: str | None = None
@@ -118,8 +176,6 @@ class GeneratedCard(StrictModel):
         "dutch_word",
         "russian_translation",
         "ipa_transcription",
-        "example_sentence_nl",
-        "example_sentence_ru",
         "lesson_topic",
     )
     @classmethod
@@ -144,6 +200,22 @@ class GeneratedCard(StrictModel):
         normalized = [tag.strip() for tag in value if tag.strip()]
         return normalized
 
+    @field_validator("form_examples")
+    @classmethod
+    def validate_unique_form_example_kinds(cls, value: list[FormExample]) -> list[FormExample]:
+        """Reject duplicate example kinds so fixed Anki slots stay unambiguous."""
+        kinds = [example.kind for example in value]
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("form_examples must not contain duplicate kinds")
+        return value
+
+    def ordered_form_examples(self) -> list[FormExample]:
+        """Return form examples in the canonical card-rendering order."""
+        return sorted(
+            self.form_examples,
+            key=lambda example: FORM_EXAMPLE_KIND_ORDER[example.kind],
+        )
+
     @model_validator(mode="after")
     def validate_pos_specific_fields(self) -> "GeneratedCard":
         """Require only the grammar fields relevant to the inferred POS."""
@@ -159,6 +231,13 @@ class GeneratedCard(StrictModel):
                 raise ValueError("nouns must not include verb_forms")
             if self.adjective_forms is not None:
                 raise ValueError("nouns must not include adjective_forms")
+            if self.plural_form is None:
+                self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "uncountable nouns")
+            else:
+                self._require_exact_example_kinds(
+                    {FormExampleKind.SINGULAR, FormExampleKind.PLURAL},
+                    "countable nouns",
+                )
             return self
 
         if self.part_of_speech == PartOfSpeech.VERB:
@@ -168,6 +247,14 @@ class GeneratedCard(StrictModel):
                 raise ValueError("verbs must not include noun-only fields")
             if self.adjective_forms is not None:
                 raise ValueError("verbs must not include adjective_forms")
+            self._require_exact_example_kinds(
+                {
+                    FormExampleKind.PRESENT_TENSE,
+                    FormExampleKind.PAST_TENSE,
+                    FormExampleKind.PAST_PARTICIPLE,
+                },
+                "verbs",
+            )
             return self
 
         if self.part_of_speech == PartOfSpeech.ADJECTIVE:
@@ -175,7 +262,17 @@ class GeneratedCard(StrictModel):
                 raise ValueError("adjectives must not include noun-only fields")
             if self.verb_forms is not None:
                 raise ValueError("adjectives must not include verb_forms")
-            return self
+            example_kinds = {example.kind for example in self.form_examples}
+            if example_kinds == {FormExampleKind.BASE_FORM, FormExampleKind.E_FORM}:
+                if self.adjective_forms is not None:
+                    raise ValueError("regular adjectives must not include adjective_forms")
+                return self
+            if example_kinds == {FormExampleKind.SINGLE_FORM}:
+                return self
+            raise ValueError(
+                "adjectives must include either base_form/e_form examples "
+                "or one single_form example"
+            )
 
         if self.plural_form or self.front_hint:
             raise ValueError("non-nouns must not include noun-only fields")
@@ -183,4 +280,20 @@ class GeneratedCard(StrictModel):
             raise ValueError("non-verbs must not include verb_forms")
         if self.adjective_forms is not None:
             raise ValueError("non-adjectives must not include adjective_forms")
+        self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "single-form words")
         return self
+
+    def _require_exact_example_kinds(self, required_kinds: set[FormExampleKind], label: str) -> None:
+        """Require a POS-specific exact set of example kinds."""
+        actual_kinds = {example.kind for example in self.form_examples}
+        if actual_kinds == required_kinds:
+            return
+
+        missing = sorted(kind.value for kind in required_kinds - actual_kinds)
+        unexpected = sorted(kind.value for kind in actual_kinds - required_kinds)
+        details: list[str] = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
+        raise ValueError(f"{label} must include exact form_examples kinds: {'; '.join(details)}")

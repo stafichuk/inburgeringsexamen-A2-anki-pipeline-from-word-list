@@ -11,7 +11,16 @@ from pathlib import Path
 import genanki
 
 from .config import DeckSettings
-from .models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
+from .models import (
+    AdjectiveForms,
+    FormExample,
+    FormExampleKind,
+    GeneratedCard,
+    SourceItem,
+    VerbForms,
+)
+
+EXAMPLE_SLOT_COUNT = 3
 
 NOTE_FIELDS = [
     "Front",
@@ -22,10 +31,19 @@ NOTE_FIELDS = [
     "Plural",
     "Verb_Forms",
     "Adjective_Forms",
-    "Example_NL",
-    "Example_RU",
     "Word_Audio",
-    "Example_Audio",
+    "Example_1_Form",
+    "Example_1_NL",
+    "Example_1_RU",
+    "Example_1_Audio",
+    "Example_2_Form",
+    "Example_2_NL",
+    "Example_2_RU",
+    "Example_2_Audio",
+    "Example_3_Form",
+    "Example_3_NL",
+    "Example_3_RU",
+    "Example_3_Audio",
     "Lesson",
     "Topic",
     "SourceWord",
@@ -64,7 +82,23 @@ DEFAULT_CSS = """
 .example-ru {
   margin-bottom: 6px;
 }
+.example-form {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
 """
+
+EXAMPLE_KIND_LABELS = {
+    FormExampleKind.SINGULAR: "Enkelvoud",
+    FormExampleKind.PLURAL: "Meervoud",
+    FormExampleKind.DEFAULT: "Voorbeeld",
+    FormExampleKind.PRESENT_TENSE: "Tegenwoordige tijd",
+    FormExampleKind.PAST_TENSE: "Verleden tijd",
+    FormExampleKind.PAST_PARTICIPLE: "Voltooid deelwoord",
+    FormExampleKind.BASE_FORM: "Zonder -e",
+    FormExampleKind.E_FORM: "Met -e",
+    FormExampleKind.SINGLE_FORM: "Onverbuigbaar",
+}
 
 
 def stable_anki_id(seed: str) -> int:
@@ -78,7 +112,7 @@ class NoteAudio:
     """Audio media files attached to one generated note."""
 
     word_audio: Path | None = None
-    example_audio: Path | None = None
+    example_audios: tuple[Path | None, ...] = ()
 
 
 def build_note_guid(source_item: SourceItem) -> str:
@@ -105,10 +139,23 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijk naamwoord:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
-<div class="example">
-  <div class="label">Voorbeeld:</div>
-  <div class="example-ru">{{Example_RU}}</div>
-  <div class="example-nl">{{Example_NL}}{{Example_Audio}}</div>
+<div class="examples">
+  <div class="label">Voorbeelden:</div>
+  {{#Example_1_NL}}<div class="example">
+    <div class="example-form">{{Example_1_Form}}</div>
+    <div class="example-ru">{{Example_1_RU}}</div>
+    <div class="example-nl">{{Example_1_NL}}{{Example_1_Audio}}</div>
+  </div>{{/Example_1_NL}}
+  {{#Example_2_NL}}<div class="example">
+    <div class="example-form">{{Example_2_Form}}</div>
+    <div class="example-ru">{{Example_2_RU}}</div>
+    <div class="example-nl">{{Example_2_NL}}{{Example_2_Audio}}</div>
+  </div>{{/Example_2_NL}}
+  {{#Example_3_NL}}<div class="example">
+    <div class="example-form">{{Example_3_Form}}</div>
+    <div class="example-ru">{{Example_3_RU}}</div>
+    <div class="example-nl">{{Example_3_NL}}{{Example_3_Audio}}</div>
+  </div>{{/Example_3_NL}}
 </div>
                 """.strip(),
             }
@@ -190,6 +237,37 @@ def format_audio_reference(path: Path | None) -> str:
     return f" [sound:{html.escape(path.name)}]"
 
 
+def format_example_form(example: FormExample) -> str:
+    """Format a form label for the Anki back side."""
+    label = EXAMPLE_KIND_LABELS[example.kind]
+    return html.escape(f"{label}: {example.form}")
+
+
+def build_example_slot_fields(card: GeneratedCard, audio: NoteAudio | None = None) -> list[str]:
+    """Build the fixed example slot fields used by the note model."""
+    examples = card.ordered_form_examples()
+    example_audios = audio.example_audios if audio else ()
+    fields: list[str] = []
+
+    for index in range(EXAMPLE_SLOT_COUNT):
+        if index >= len(examples):
+            fields.extend(["", "", "", ""])
+            continue
+
+        example = examples[index]
+        example_audio = example_audios[index] if index < len(example_audios) else None
+        fields.extend(
+            [
+                format_example_form(example),
+                html.escape(example.example_sentence_nl),
+                html.escape(example.example_sentence_ru),
+                format_audio_reference(example_audio),
+            ]
+        )
+
+    return fields
+
+
 def build_note(
     model: genanki.Model,
     source_item: SourceItem,
@@ -206,10 +284,8 @@ def build_note(
         html.escape(card.plural_form or ""),
         format_verb_forms(card.verb_forms),
         format_adjective_forms(card.adjective_forms),
-        html.escape(card.example_sentence_nl),
-        html.escape(card.example_sentence_ru),
         format_audio_reference(audio.word_audio if audio else None),
-        format_audio_reference(audio.example_audio if audio else None),
+        *build_example_slot_fields(card, audio),
         html.escape(source_item.lesson or ""),
         html.escape(source_item.topic or card.lesson_topic),
         html.escape(source_item.text),
@@ -235,7 +311,7 @@ def build_deck_package(
         audio = (audio_by_guid or {}).get(build_note_guid(source_item))
         deck.add_note(build_note(model, source_item, card, audio=audio))
         if audio is not None:
-            for media_path in (audio.word_audio, audio.example_audio):
+            for media_path in (audio.word_audio, *audio.example_audios):
                 if media_path is not None and media_path not in seen_media_files:
                     media_files.append(str(media_path))
                     seen_media_files.add(media_path)

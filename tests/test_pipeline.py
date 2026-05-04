@@ -38,9 +38,27 @@ def make_card(word: str) -> GeneratedCard:
         russian_translation="учиться",
         part_of_speech="verb",
         ipa_transcription="ˈleːrə(n)",
-        example_sentence_nl=f"Ik gebruik {word} in de les.",
-        example_sentence_ru=f"Я использую {word} на уроке.",
         lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "present_tense",
+                "form": word,
+                "example_sentence_nl": f"Ik gebruik {word} in de les.",
+                "example_sentence_ru": f"Я использую {word} на уроке.",
+            },
+            {
+                "kind": "past_tense",
+                "form": "gebruikte",
+                "example_sentence_nl": f"Ik gebruikte {word} gisteren.",
+                "example_sentence_ru": f"Вчера я использовал {word}.",
+            },
+            {
+                "kind": "past_participle",
+                "form": "gebruikt",
+                "example_sentence_nl": f"Ik heb {word} gebruikt.",
+                "example_sentence_ru": f"Я использовал {word}.",
+            },
+        ],
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
@@ -57,9 +75,21 @@ def make_noun_card(word: str) -> GeneratedCard:
         russian_translation="школа",
         part_of_speech="noun",
         ipa_transcription="sxoːl",
-        example_sentence_nl=f"Mijn {word} is dichtbij.",
-        example_sentence_ru="Моя школа находится рядом.",
         lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "singular",
+                "form": f"de {word}",
+                "example_sentence_nl": f"De {word} is dichtbij.",
+                "example_sentence_ru": "Школа находится рядом.",
+            },
+            {
+                "kind": "plural",
+                "form": "scholen",
+                "example_sentence_nl": "De scholen zijn dichtbij.",
+                "example_sentence_ru": "Школы находятся рядом.",
+            },
+        ],
         tags=["school", "noun"],
         plural_form="scholen",
         front_hint="школа (множественное число?)",
@@ -116,7 +146,7 @@ class FakeAudioGenerator:
 
 class FailingExampleAudioGenerator(FakeAudioGenerator):
     def generate_audio(self, text: str, *, label: str) -> Path:
-        if label == "example":
+        if label == "example-past-tense":
             raise AudioGenerationError("example synthesis failed")
         return super().generate_audio(text, label=label)
 
@@ -222,12 +252,15 @@ def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypat
     assert result.audio_failed_items == []
     assert audio_generator.calls == [
         ("word", "leren"),
-        ("example", "Ik gebruik leren in de les."),
+        ("example-present-tense", "Ik gebruik leren in de les."),
+        ("example-past-tense", "Ik gebruikte leren gisteren."),
+        ("example-past-participle", "Ik heb leren gebruikt."),
     ]
     assert len(captured_audio_by_guid) == 1
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.word_audio is not None
-    assert audio.example_audio is not None
+    assert len(audio.example_audios) == 3
+    assert all(example_audio is not None for example_audio in audio.example_audios)
 
 
 def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeypatch) -> None:
@@ -251,6 +284,10 @@ def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeyp
 
     assert result.generated_items == 1
     assert audio_generator.calls[0] == ("word", "de school")
+    assert audio_generator.calls[1:] == [
+        ("example-singular", "De school is dichtbij."),
+        ("example-plural", "De scholen zijn dichtbij."),
+    ]
 
 
 def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) -> None:
@@ -277,7 +314,9 @@ def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) ->
     assert result.generated_items == 1
     assert len(result.audio_failed_items) == 1
     assert result.audio_failed_items[0].source_word == "leren"
-    assert result.audio_failed_items[0].field_name == "Example_Audio"
+    assert result.audio_failed_items[0].field_name == "Example_2_Audio"
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.word_audio is not None
-    assert audio.example_audio is None
+    assert audio.example_audios[0] is not None
+    assert audio.example_audios[1] is None
+    assert audio.example_audios[2] is not None

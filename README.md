@@ -142,16 +142,16 @@ Core fields:
 - `russian_translation`
 - `part_of_speech`
 - `ipa_transcription`
-- `example_sentence_nl`
-- `example_sentence_ru`
 - `lesson_topic`
+- `form_examples`
 - `tags`
 
 POS-specific fields:
-- countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`
-- uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null`
-- verbs: `verb_forms`
-- adjectives: `adjective_forms` only for onverbuigbare adjectives; regular adjectives use `null`
+- countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`, and `singular` / `plural` examples
+- uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example
+- verbs: `verb_forms`, plus `present_tense`, `past_tense`, and `past_participle` examples
+- adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
+- adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
 
 ### Sample JSON Object
 ```json
@@ -160,9 +160,21 @@ POS-specific fields:
   "russian_translation": "школа",
   "part_of_speech": "noun",
   "ipa_transcription": "sxoːl",
-  "example_sentence_nl": "Mijn school is dichtbij.",
-  "example_sentence_ru": "Моя школа находится рядом.",
   "lesson_topic": "De school",
+  "form_examples": [
+    {
+      "kind": "singular",
+      "form": "de school",
+      "example_sentence_nl": "De school is dichtbij.",
+      "example_sentence_ru": "Школа находится рядом."
+    },
+    {
+      "kind": "plural",
+      "form": "scholen",
+      "example_sentence_nl": "De scholen zijn dichtbij.",
+      "example_sentence_ru": "Школы находятся рядом."
+    }
+  ],
   "tags": ["school", "lesson-3", "noun"],
   "plural_form": "scholen",
   "front_hint": "школа (множественное число?)",
@@ -182,10 +194,19 @@ The generated note type contains these fields:
 - `Plural`
 - `Verb_Forms`
 - `Adjective_Forms`
-- `Example_NL`
-- `Example_RU`
 - `Word_Audio`
-- `Example_Audio`
+- `Example_1_Form`
+- `Example_1_NL`
+- `Example_1_RU`
+- `Example_1_Audio`
+- `Example_2_Form`
+- `Example_2_NL`
+- `Example_2_RU`
+- `Example_2_Audio`
+- `Example_3_Form`
+- `Example_3_NL`
+- `Example_3_RU`
+- `Example_3_Audio`
 - `Lesson`
 - `Topic`
 - `SourceWord`
@@ -194,12 +215,10 @@ Card behavior:
 - Front side is Russian-driven.
 - Countable noun cards explicitly prompt plural recall.
 - Uncountable noun cards keep the front hint plain and do not add `(множественное число?)`.
-- Regular adjective cards do not list predictable adjective endings.
-- Onverbuigbare adjectives show a short note and example phrase, such as `gouden ring`.
-- Back side shows Dutch, IPA, grammar details, then the example sentence in this order:
-  1. Russian translation
-  2. Dutch sentence
-- `Word_Audio` and `Example_Audio` are populated with packaged `[sound:...]` references when audio generation is enabled.
+- Regular adjective cards do not list predictable endings as grammar fields, but examples must show both visible forms, e.g. `mooi` and `mooie`.
+- Onverbuigbare adjectives use one clear `single_form` example in a context where regular adjectives would normally take `-e`, e.g. `de gouden ring`.
+- Back side shows Dutch, IPA, grammar details, then the generated examples. Each example shows the form label, Russian sentence, Dutch sentence, and its matching audio reference when available.
+- `Word_Audio` and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
 
 ## Caching
 Each successful generation is cached locally in `.cache/cards/` by:
@@ -252,7 +271,7 @@ You can provide `audio.azure.endpoint` instead of `audio.azure.region` when you 
 
 When enabled, the app:
 - generates one MP3 for `Word_Audio` from the Dutch word
-- generates one MP3 for `Example_Audio` from the Dutch example sentence
+- generates one MP3 per populated example slot
 - reuses existing files in `audio.directory` for unchanged text, voice, and output format
 - writes Anki `[sound:...]` references into the note fields and bundles the media into the `.apkg`
 
@@ -262,7 +281,7 @@ Audio failures are non-fatal for deck writing. The affected sound reference is o
 Run the test suite with:
 
 ```bash
-pytest
+source /Users/dstafichuk/setup_env.sh && .venv/bin/python -m pytest -q
 ```
 
 Included tests cover:
