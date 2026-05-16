@@ -314,6 +314,22 @@ def test_format_verb_forms_shows_ik_and_hij_present_forms_on_separate_lines() ->
     assert "Tegenwoordige tijd: ik leer<br>hij leert" in formatted
 
 
+def test_format_verb_forms_omits_perfectum_but_keeps_past_participle() -> None:
+    formatted = format_verb_forms(
+        VerbForms(
+            infinitive="groeien",
+            present_tense="ik groei; hij groeit",
+            past_tense="groeide",
+            past_participle="gegroeid",
+            perfect_example="De kinderen zijn snel gegroeid.",
+        )
+    )
+
+    assert "Voltooid deelwoord: gegroeid" in formatted
+    assert "Perfectum:" not in formatted
+    assert "De kinderen zijn snel gegroeid." not in formatted
+
+
 def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
     settings = DeckSettings()
     source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3")

@@ -192,8 +192,6 @@ def format_verb_forms(verb_forms: VerbForms | None) -> str:
         f"Verleden tijd: {verb_forms.past_tense}",
         f"Voltooid deelwoord: {verb_forms.past_participle}",
     ]
-    if verb_forms.perfect_example:
-        lines.append(f"Perfectum: {verb_forms.perfect_example}")
     if verb_forms.separable_prefix:
         lines.append(f"Separable prefix: {verb_forms.separable_prefix}")
     if verb_forms.conjugation_notes:
