@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import html
 from pathlib import Path
+import re
 
 import genanki
 
@@ -171,13 +172,20 @@ def _join_html_lines(lines: list[str]) -> str:
     return "<br>".join(html.escape(line) for line in lines if line.strip())
 
 
+def _split_present_tense_forms(present_tense: str) -> list[str]:
+    """Split compact present-tense forms into display lines."""
+    return [form.strip() for form in re.split(r"[\n;,]+", present_tense) if form.strip()]
+
+
 def format_verb_forms(verb_forms: VerbForms | None) -> str:
     """Format verb forms for the Anki back side."""
     if verb_forms is None:
         return ""
+    present_tense_lines = _split_present_tense_forms(verb_forms.present_tense)
     lines = [
         f"Infinitive: {verb_forms.infinitive}",
-        f"Tegenwoordige tijd: {verb_forms.present_tense}",
+        f"Tegenwoordige tijd: {present_tense_lines[0]}",
+        *present_tense_lines[1:],
         f"Verleden tijd: {verb_forms.past_tense}",
         f"Voltooid deelwoord: {verb_forms.past_participle}",
     ]

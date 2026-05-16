@@ -35,7 +35,7 @@ VALID_JSON = """
   "front_hint": null,
   "verb_forms": {
     "infinitive": "leren",
-    "present_tense": "ik leer, jij leert, hij leert",
+    "present_tense": "ik leer; hij leert",
     "past_tense": "leerde, leerden",
     "past_participle": "geleerd",
     "perfect_example": "Ik heb Nederlands geleerd.",

@@ -62,7 +62,7 @@ def make_card(word: str) -> GeneratedCard:
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
-            present_tense=f"ik {word}, jij {word}t, hij {word}t",
+            present_tense=f"ik {word}; hij {word}t",
             past_tense="leerde, leerden",
             past_participle="geleerd",
         ),

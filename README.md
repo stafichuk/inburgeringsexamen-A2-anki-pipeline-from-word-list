@@ -149,7 +149,7 @@ Core fields:
 POS-specific fields:
 - countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`, and `singular` / `plural` examples
 - uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example
-- verbs: `verb_forms`, plus `present_tense`, `past_tense`, and `past_participle` examples
+- verbs: `verb_forms`, with `present_tense` showing both `ik` and `hij` forms, plus `present_tense`, `past_tense`, and `past_participle` examples
 - adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
 - adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
 

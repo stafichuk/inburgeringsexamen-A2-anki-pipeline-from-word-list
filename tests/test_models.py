@@ -192,7 +192,7 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
         "front_hint": None,
         "verb_forms": {
             "infinitive": "leren",
-            "present_tense": "ik leer, jij leert, hij leert",
+            "present_tense": "ik leer; hij leert",
             "past_tense": "leerde, leerden",
             "past_participle": "geleerd",
             "perfect_example": "Ik heb Nederlands geleerd.",
@@ -238,7 +238,7 @@ def test_generated_card_rejects_verb_without_past_participle_example() -> None:
         "front_hint": None,
         "verb_forms": {
             "infinitive": "leren",
-            "present_tense": "ik leer, jij leert, hij leert",
+            "present_tense": "ik leer; hij leert",
             "past_tense": "leerde, leerden",
             "past_participle": "geleerd",
         },
@@ -250,6 +250,53 @@ def test_generated_card_rejects_verb_without_past_participle_example() -> None:
     except ValidationError as exc:
         assert "verbs" in str(exc)
         assert "past_participle" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
+def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
+    payload = {
+        "dutch_word": "leren",
+        "russian_translation": "учиться",
+        "part_of_speech": "verb",
+        "ipa_transcription": "ˈleːrə(n)",
+        "lesson_topic": "De school",
+        "form_examples": [
+            {
+                "kind": "present_tense",
+                "form": "leer",
+                "example_sentence_nl": "Ik leer Nederlands op school.",
+                "example_sentence_ru": "Я учу нидерландский в школе.",
+            },
+            {
+                "kind": "past_tense",
+                "form": "leerde",
+                "example_sentence_nl": "Ik leerde gisteren nieuwe woorden.",
+                "example_sentence_ru": "Вчера я учил новые слова.",
+            },
+            {
+                "kind": "past_participle",
+                "form": "geleerd",
+                "example_sentence_nl": "Ik heb veel geleerd.",
+                "example_sentence_ru": "Я многому научился.",
+            },
+        ],
+        "tags": ["school", "verb"],
+        "plural_form": None,
+        "front_hint": None,
+        "verb_forms": {
+            "infinitive": "leren",
+            "present_tense": "ik leer",
+            "past_tense": "leerde, leerden",
+            "past_participle": "geleerd",
+        },
+        "adjective_forms": None,
+    }
+
+    try:
+        GeneratedCard.model_validate(payload)
+    except ValidationError as exc:
+        assert "ik and hij" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("validation should have failed")
 

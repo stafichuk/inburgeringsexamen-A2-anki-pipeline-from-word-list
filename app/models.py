@@ -91,7 +91,9 @@ class VerbForms(StrictModel):
     """Verb forms needed for learner-oriented Dutch cards."""
 
     infinitive: str
-    present_tense: str
+    present_tense: str = Field(
+        description="Present singular forms including both 'ik ...' and 'hij ...', e.g. 'ik leer; hij leert'."
+    )
     past_tense: str
     past_participle: str
     perfect_example: str | None = None
@@ -104,6 +106,19 @@ class VerbForms(StrictModel):
         """Ensure required verb forms are non-empty strings."""
         if not value.strip():
             raise ValueError("verb form fields must not be empty")
+        return value
+
+    @field_validator("present_tense")
+    @classmethod
+    def ensure_present_tense_has_ik_and_hij_forms(cls, value: str) -> str:
+        """Require the two present-tense forms most useful on learner cards."""
+        missing = [
+            pronoun
+            for pronoun in ("ik", "hij")
+            if re.search(rf"\b{pronoun}\b\s+\S+", value.lower()) is None
+        ]
+        if missing:
+            raise ValueError("present_tense must include both ik and hij forms")
         return value
 
     @field_validator("perfect_example", "separable_prefix", "conjugation_notes")

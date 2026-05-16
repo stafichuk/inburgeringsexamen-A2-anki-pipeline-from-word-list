@@ -12,6 +12,7 @@ from app.anki import (
     build_note_guid,
     create_note_model,
     format_adjective_forms,
+    format_verb_forms,
 )
 from app.config import DeckSettings
 from app.models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
@@ -19,6 +20,7 @@ from app.models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
 
 def make_card(word: str = "leren") -> GeneratedCard:
     present_form = "leer" if word == "leren" else word
+    hij_form = "leert" if word == "leren" else f"{word}t"
     return GeneratedCard(
         dutch_word=word,
         russian_translation="учиться",
@@ -48,7 +50,7 @@ def make_card(word: str = "leren") -> GeneratedCard:
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
-            present_tense=f"ik {word}, jij {word}t, hij {word}t",
+            present_tense=f"ik {present_form}; hij {hij_form}",
             past_tense="leerde, leerden",
             past_participle="geleerd",
             perfect_example="Ik heb Nederlands geleerd.",
@@ -287,6 +289,19 @@ def test_format_adjective_forms_only_shows_indeclinable_note() -> None:
     )
 
     assert formatted == "Onverbuigbaar: ja<br>Voorbeeld: de gouden ring<br>Note: Stofadjectief op -en."
+
+
+def test_format_verb_forms_shows_ik_and_hij_present_forms_on_separate_lines() -> None:
+    formatted = format_verb_forms(
+        VerbForms(
+            infinitive="leren",
+            present_tense="ik leer; hij leert",
+            past_tense="leerde, leerden",
+            past_participle="geleerd",
+        )
+    )
+
+    assert "Tegenwoordige tijd: ik leer<br>hij leert" in formatted
 
 
 def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
