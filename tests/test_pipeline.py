@@ -6,7 +6,7 @@ from app.audio import AudioGenerationError
 from app.cache import CardCache
 from app.config import AppSettings
 from app.models import GeneratedCard, SourceItem, VerbForms
-from app.pipeline import DeckGenerationPipeline
+from app.pipeline import DeckGenerationPipeline, load_source_items
 
 
 def make_settings(cache_dir: Path, *, parallelism: int = 4, audio_enabled: bool = False) -> AppSettings:
@@ -109,6 +109,36 @@ class NounClient(FakeClient):
     def generate_card(self, source_item: SourceItem) -> GeneratedCard:
         self.calls += 1
         return make_noun_card(source_item.text)
+
+
+class TranslationHintNounClient(FakeClient):
+    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
+        self.calls += 1
+        translation = source_item.translation_hint or "родственник"
+        return GeneratedCard(
+            dutch_word=source_item.text,
+            russian_translation=translation,
+            part_of_speech="noun",
+            ipa_transcription="neːf",
+            lesson_topic="Familie",
+            form_examples=[
+                {
+                    "kind": "singular",
+                    "form": source_item.text,
+                    "example_sentence_nl": f"{source_item.text.capitalize()} komt vandaag.",
+                    "example_sentence_ru": f"{translation.capitalize()} придет сегодня.",
+                },
+                {
+                    "kind": "plural",
+                    "form": "neven",
+                    "example_sentence_nl": "Mijn neven komen vandaag.",
+                    "example_sentence_ru": "Мои родственники придут сегодня.",
+                },
+            ],
+            tags=["familie", "noun"],
+            plural_form="neven",
+            front_hint=f"{translation} (множественное число?)",
+        )
 
 
 class PartiallyFailingClient(FakeClient):
@@ -225,6 +255,80 @@ def test_pipeline_preserves_input_order_with_parallel_generation(tmp_path: Path,
 
     assert result.generated_items == 3
     assert captured_order == ["eerste", "tweede", "derde"]
+
+
+def test_pipeline_keeps_duplicate_words_with_distinct_translation_hints(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("de neef - племянник\nde neef - двоюродный брат\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", parallelism=1)
+    captured_cards: list[tuple[str, str | None, str]] = []
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_cards.extend(
+            (source_item.text, source_item.translation_hint, card.russian_translation)
+            for source_item, card in cards
+        )
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    client = TranslationHintNounClient()
+    result = DeckGenerationPipeline(settings, llm_client=client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert result.generated_items == 2
+    assert result.cached_items == 0
+    assert client.calls == 2
+    assert captured_cards == [
+        ("de neef", "племянник", "племянник"),
+        ("de neef", "двоюродный брат", "двоюродный брат"),
+    ]
+
+
+def test_load_source_items_parses_plain_and_hinted_lines(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "\n".join(
+            [
+                "# Familie",
+                "",
+                "de broer",
+                "de neef - племянник",
+                "de neef - двоюродный брат",
+                "e-mail",
+                "kinderopvang - детский сад",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    items = load_source_items(input_path, topic="Familie", lesson="Les 1", exam_level="A2")
+
+    assert [(item.text, item.translation_hint) for item in items] == [
+        ("de broer", None),
+        ("de neef", "племянник"),
+        ("de neef", "двоюродный брат"),
+        ("e-mail", None),
+        ("kinderopvang", "детский сад"),
+    ]
+    assert all(item.topic == "Familie" for item in items)
+
+
+def test_load_source_items_rejects_malformed_translation_hints(tmp_path: Path) -> None:
+    for bad_line in ("de neef -", "- племянник", " - племянник", "-"):
+        input_path = tmp_path / f"{bad_line.replace(' ', '_')}.txt"
+        input_path.write_text(f"{bad_line}\n", encoding="utf-8")
+
+        try:
+            load_source_items(input_path, topic=None, lesson=None, exam_level=None)
+        except ValueError as exc:
+            assert "expected '<Dutch item> - <Russian translation hint>'" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError(f"malformed line should have failed: {bad_line}")
 
 
 def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypatch) -> None:

@@ -98,6 +98,16 @@ def test_deck_generation_writes_apkg(tmp_path: Path) -> None:
     assert output_path.stat().st_size > 0
 
 
+def test_note_guid_includes_translation_hint() -> None:
+    nephew = SourceItem(text="de neef", translation_hint="племянник", topic="Familie", lesson="Les 1")
+    cousin = SourceItem(text="de neef", translation_hint="двоюродный брат", topic="Familie", lesson="Les 1")
+    plain = SourceItem(text="de neef", topic="Familie", lesson="Les 1")
+
+    assert build_note_guid(nephew) != build_note_guid(cousin)
+    assert build_note_guid(nephew) != build_note_guid(plain)
+    assert build_note_guid(cousin) != build_note_guid(plain)
+
+
 def test_note_model_contains_expected_fields() -> None:
     model = create_note_model(DeckSettings())
     model_field_names = [field["name"] for field in model.fields]

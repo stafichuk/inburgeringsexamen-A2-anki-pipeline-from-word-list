@@ -17,6 +17,7 @@ from .models import GeneratedCard, SourceItem
 from .prompts import PROMPT_VERSION
 
 LOGGER = logging.getLogger(__name__)
+SOURCE_TRANSLATION_DELIMITER = " - "
 
 
 class CardGenerator(Protocol):
@@ -310,15 +311,58 @@ def load_source_items(
         raise FileNotFoundError(f"input file not found: {input_path}")
 
     source_items: list[SourceItem] = []
-    for raw_line in input_path.read_text(encoding="utf-8").splitlines():
+    for line_number, raw_line in enumerate(input_path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        source_items.append(SourceItem(text=line, topic=topic, lesson=lesson, exam_level=exam_level))
+        source_items.append(
+            parse_source_item_line(
+                line,
+                line_number=line_number,
+                topic=topic,
+                lesson=lesson,
+                exam_level=exam_level,
+            )
+        )
 
     if not source_items:
         raise ValueError("input file does not contain any vocabulary items")
     return source_items
+
+
+def parse_source_item_line(
+    line: str,
+    *,
+    line_number: int,
+    topic: str | None,
+    lesson: str | None,
+    exam_level: str | None,
+) -> SourceItem:
+    """Parse one non-empty input line into a source item."""
+    if line == "-" or line.startswith("- ") or line.endswith(" -"):
+        raise ValueError(
+            f"invalid hinted vocabulary item on line {line_number}; "
+            "expected '<Dutch item> - <Russian translation hint>'"
+        )
+
+    if SOURCE_TRANSLATION_DELIMITER not in line:
+        return SourceItem(text=line, topic=topic, lesson=lesson, exam_level=exam_level)
+
+    text, translation_hint = line.split(SOURCE_TRANSLATION_DELIMITER, 1)
+    text = text.strip()
+    translation_hint = translation_hint.strip()
+    if not text or not translation_hint:
+        raise ValueError(
+            f"invalid hinted vocabulary item on line {line_number}; "
+            "expected '<Dutch item> - <Russian translation hint>'"
+        )
+    return SourceItem(
+        text=text,
+        translation_hint=translation_hint,
+        topic=topic,
+        lesson=lesson,
+        exam_level=exam_level,
+    )
 
 
 def resolve_deck_name(

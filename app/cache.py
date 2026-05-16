@@ -17,6 +17,11 @@ def normalize_word(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
+def normalize_text(value: str) -> str:
+    """Normalize free-form text for stable cache keys without changing case."""
+    return " ".join(value.strip().split())
+
+
 class CardCache:
     """File-based cache for generated card payloads."""
 
@@ -34,6 +39,7 @@ class CardCache:
         """Create a stable cache key for a source item and generation context."""
         payload = {
             "word": normalize_word(source_item.text),
+            "translation_hint": normalize_text(source_item.translation_hint or ""),
             "topic": source_item.topic or "",
             "lesson": source_item.lesson or "",
             "exam_level": source_item.exam_level or "",
@@ -80,6 +86,7 @@ class CardCache:
         path = self._path_for_key(key)
         payload = {
             "source_word": source_item.text,
+            "source_translation_hint": source_item.translation_hint,
             "topic": source_item.topic,
             "lesson": source_item.lesson,
             "exam_level": source_item.exam_level,

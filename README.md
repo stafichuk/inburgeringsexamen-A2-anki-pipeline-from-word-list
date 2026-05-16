@@ -5,9 +5,10 @@ CLI application for generating `.apkg` Anki decks from plain Dutch word lists. T
 ## Features
 - Reads a plain text file with one Dutch word or phrase per line.
 - Calls an external OpenAI-compatible LLM endpoint to infer part of speech and generate structured card data.
+- Supports optional per-line Russian translation hints for sense-specific cards.
 - Validates every model response against strict Pydantic schemas.
 - Retries malformed responses and fails per-item rather than losing the whole run.
-- Caches generated items locally by word, topic, lesson, model, and prompt version.
+- Caches generated items locally by word, translation hint, topic, lesson, model, and prompt version.
 - Generates uncached items in parallel with a bounded worker pool.
 - Generates a real `.apkg` deck with a custom note type using `genanki`.
 - Optionally generates and packages Dutch word and example-sentence audio.
@@ -134,6 +135,19 @@ generate-deck \
   --lesson "Lesson 3"
 ```
 
+## Input Word List
+Each non-comment line is either a plain Dutch item or a Dutch item with a strict Russian translation hint:
+
+```text
+de broer
+de neef - племянник
+de neef - двоюродный брат
+kinderopvang - детский сад
+e-mail
+```
+
+The delimiter is the spaced form ` - `. Hyphenated Dutch words such as `e-mail` are treated as plain items. A hinted line becomes its own card, so the two `de neef` lines above have separate cache entries, note IDs, examples, audio, and Anki scheduling.
+
 ## LLM Output Schema
 The model is prompted to return JSON only. Responses are validated against strict Pydantic models with POS-specific requirements.
 
@@ -224,6 +238,7 @@ Card behavior:
 ## Caching
 Each successful generation is cached locally in `.cache/cards/` by:
 - normalized source word
+- translation hint, when provided
 - topic
 - lesson
 - exam level

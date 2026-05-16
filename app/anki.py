@@ -120,7 +120,10 @@ class NoteAudio:
 
 def build_note_guid(source_item: SourceItem) -> str:
     """Build the stable note GUID for a source item."""
-    guid_seed = f"{source_item.text}|{source_item.topic or ''}|{source_item.lesson or ''}"
+    guid_seed = (
+        f"{source_item.text}|{source_item.translation_hint or ''}|"
+        f"{source_item.topic or ''}|{source_item.lesson or ''}"
+    )
     return hashlib.md5(guid_seed.encode("utf-8")).hexdigest()
 
 

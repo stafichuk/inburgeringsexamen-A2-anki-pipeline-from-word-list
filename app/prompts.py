@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-05-16.1"
+PROMPT_VERSION = "2026-05-16.2"
 
 
 def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
@@ -14,6 +14,7 @@ def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
     topic = source_item.topic or "Neutral everyday learning context"
     lesson = source_item.lesson or "No lesson title provided"
     exam_level = source_item.exam_level or "A2 Inburgering Spreken"
+    translation_hint = source_item.translation_hint or "Not provided"
     schema = json.dumps(GeneratedCard.model_json_schema(), ensure_ascii=False, indent=2)
 
     system_prompt = (
@@ -31,6 +32,9 @@ Generate one structured JSON object for the Dutch input item below.
 Input item:
 {source_item.text}
 
+Translation hint:
+{translation_hint}
+
 Context:
 - topic: {topic}
 - lesson: {lesson}
@@ -40,6 +44,8 @@ Rules:
 - Infer the part of speech. The user does not provide it manually.
 - The card is for active Dutch vocabulary learning for the A2 Inburgering Spreken exam.
 - Russian translation must be natural, concise, and learner-friendly.
+- If a translation hint is provided, treat it as a strict sense constraint. russian_translation and noun front_hint must use that requested Russian sense, examples must match that meaning, and alternative meanings of the Dutch input must not be merged into this card.
+- Never include the translation hint or the ' - ' delimiter in dutch_word.
 - Dutch example sentences must be simple A2-level Dutch.
 - If a topic is provided, prefer example sentences that fit that topic.
 - If no specific topic is provided, use a neutral everyday-learning context.

@@ -159,6 +159,7 @@ class SourceItem(StrictModel):
     """Input item plus run-time metadata."""
 
     text: str
+    translation_hint: str | None = None
     topic: str | None = None
     lesson: str | None = None
     exam_level: str | None = None
@@ -169,6 +170,14 @@ class SourceItem(StrictModel):
         """Reject blank source items."""
         if not value.strip():
             raise ValueError("source item text must not be empty")
+        return value
+
+    @field_validator("translation_hint")
+    @classmethod
+    def normalize_translation_hint(cls, value: str | None) -> str | None:
+        """Reject blank translation hints."""
+        if value is not None and not value.strip():
+            raise ValueError("translation_hint must be null or non-empty")
         return value
 
 
