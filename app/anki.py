@@ -29,6 +29,7 @@ NOTE_FIELDS = [
     "IPA",
     "POS",
     "Plural",
+    "Plural_Audio",
     "Verb_Forms",
     "Adjective_Forms",
     "Word_Audio",
@@ -112,6 +113,7 @@ class NoteAudio:
     """Audio media files attached to one generated note."""
 
     word_audio: Path | None = None
+    plural_audio: Path | None = None
     example_audios: tuple[Path | None, ...] = ()
 
 
@@ -135,7 +137,7 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
                 "afmt": """
 {{FrontSide}}
 <hr id="answer">
-<div class="word">{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}){{/Plural}}</div>
+<div class="word">{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}{{Plural_Audio}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijk naamwoord:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
@@ -282,6 +284,7 @@ def build_note(
         html.escape(card.ipa_transcription),
         format_part_of_speech(card),
         html.escape(card.plural_form or ""),
+        format_audio_reference(audio.plural_audio if audio and card.plural_form else None),
         format_verb_forms(card.verb_forms),
         format_adjective_forms(card.adjective_forms),
         format_audio_reference(audio.word_audio if audio else None),
@@ -311,7 +314,11 @@ def build_deck_package(
         audio = (audio_by_guid or {}).get(build_note_guid(source_item))
         deck.add_note(build_note(model, source_item, card, audio=audio))
         if audio is not None:
-            for media_path in (audio.word_audio, *audio.example_audios):
+            media_paths = [audio.word_audio]
+            if card.plural_form:
+                media_paths.append(audio.plural_audio)
+            media_paths.extend(audio.example_audios)
+            for media_path in media_paths:
                 if media_path is not None and media_path not in seen_media_files:
                     media_files.append(str(media_path))
                     seen_media_files.add(media_path)

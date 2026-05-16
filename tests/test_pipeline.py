@@ -268,8 +268,10 @@ def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeyp
     input_path.write_text("school\n", encoding="utf-8")
     output_path = tmp_path / "deck.apkg"
     settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    captured_audio_by_guid = {}
 
     def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_audio_by_guid.update(audio_by_guid or {})
         output_path.write_text("stub", encoding="utf-8")
         return output_path
 
@@ -285,9 +287,12 @@ def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeyp
     assert result.generated_items == 1
     assert audio_generator.calls[0] == ("word", "de school")
     assert audio_generator.calls[1:] == [
+        ("plural", "scholen"),
         ("example-singular", "De school is dichtbij."),
         ("example-plural", "De scholen zijn dichtbij."),
     ]
+    audio = next(iter(captured_audio_by_guid.values()))
+    assert audio.plural_audio is not None
 
 
 def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) -> None:

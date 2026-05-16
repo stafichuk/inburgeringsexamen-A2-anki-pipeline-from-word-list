@@ -164,6 +164,17 @@ class DeckGenerationPipeline:
                 label="word",
                 audio_failed_items=audio_failed_items,
             )
+            plural_audio = (
+                self._generate_one_audio(
+                    source_item=source_item,
+                    text=card.plural_form,
+                    field_name="Plural_Audio",
+                    label="plural",
+                    audio_failed_items=audio_failed_items,
+                )
+                if card.plural_form
+                else None
+            )
             example_audios = tuple(
                 self._generate_one_audio(
                     source_item=source_item,
@@ -174,9 +185,14 @@ class DeckGenerationPipeline:
                 )
                 for index, example in enumerate(card.ordered_form_examples(), start=1)
             )
-            if word_audio is not None or any(example_audio is not None for example_audio in example_audios):
+            if (
+                word_audio is not None
+                or plural_audio is not None
+                or any(example_audio is not None for example_audio in example_audios)
+            ):
                 audio_by_guid[build_note_guid(source_item)] = NoteAudio(
                     word_audio=word_audio,
+                    plural_audio=plural_audio,
                     example_audios=example_audios,
                 )
         return audio_by_guid

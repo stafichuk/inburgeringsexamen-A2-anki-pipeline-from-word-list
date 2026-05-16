@@ -57,6 +57,33 @@ def make_card(word: str = "leren") -> GeneratedCard:
     )
 
 
+def make_countable_noun_card() -> GeneratedCard:
+    return GeneratedCard(
+        dutch_word="de school",
+        russian_translation="школа",
+        part_of_speech="noun",
+        ipa_transcription="sxoːl",
+        lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "singular",
+                "form": "de school",
+                "example_sentence_nl": "De school is dichtbij.",
+                "example_sentence_ru": "Школа находится рядом.",
+            },
+            {
+                "kind": "plural",
+                "form": "scholen",
+                "example_sentence_nl": "De scholen zijn dichtbij.",
+                "example_sentence_ru": "Школы находятся рядом.",
+            },
+        ],
+        tags=["school"],
+        plural_form="scholen",
+        front_hint="школа (множественное число?)",
+    )
+
+
 def test_deck_generation_writes_apkg(tmp_path: Path) -> None:
     settings = DeckSettings()
     source_item = SourceItem(text="leren", topic="De school", lesson="Lesson 3", exam_level="A2")
@@ -76,6 +103,7 @@ def test_note_model_contains_expected_fields() -> None:
     assert "Example_NL" not in model_field_names
     assert "Example_RU" not in model_field_names
     assert "Example_Audio" not in model_field_names
+    assert "Plural_Audio" in model_field_names
     assert "Example_1_Form" in model_field_names
     assert "Example_3_Audio" in model_field_names
 
@@ -101,7 +129,7 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "Lesson:" not in template
     assert "Topic:" not in template
     assert "Article:" not in template
-    assert "(meervoud {{Plural}})" in template
+    assert "(meervoud {{Plural}}{{Plural_Audio}})" in template
     assert "color: #6b1d1d;" not in css
 
 
@@ -177,9 +205,49 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
     note = build_note(model, source_item, make_card(), audio=audio)
 
     assert note.fields[NOTE_FIELDS.index("Word_Audio")] == " [sound:word.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Plural_Audio")] == ""
     assert note.fields[NOTE_FIELDS.index("Example_1_Audio")] == " [sound:present.mp3]"
     assert note.fields[NOTE_FIELDS.index("Example_2_Audio")] == " [sound:past.mp3]"
     assert note.fields[NOTE_FIELDS.index("Example_3_Audio")] == " [sound:participle.mp3]"
+
+
+def test_build_note_includes_plural_sound_reference_for_countable_nouns(tmp_path: Path) -> None:
+    source_item = SourceItem(text="school", topic="De school", lesson="Lesson 3", exam_level="A2")
+    model = create_note_model(DeckSettings())
+    card = GeneratedCard(
+        dutch_word="de school",
+        russian_translation="школа",
+        part_of_speech="noun",
+        ipa_transcription="sxoːl",
+        lesson_topic="De school",
+        form_examples=[
+            {
+                "kind": "singular",
+                "form": "de school",
+                "example_sentence_nl": "De school is dichtbij.",
+                "example_sentence_ru": "Школа находится рядом.",
+            },
+            {
+                "kind": "plural",
+                "form": "scholen",
+                "example_sentence_nl": "De scholen zijn dichtbij.",
+                "example_sentence_ru": "Школы находятся рядом.",
+            },
+        ],
+        tags=["school"],
+        plural_form="scholen",
+        front_hint="школа (множественное число?)",
+    )
+
+    note = build_note(
+        model,
+        source_item,
+        card,
+        audio=NoteAudio(plural_audio=tmp_path / "plural.mp3"),
+    )
+
+    assert note.fields[NOTE_FIELDS.index("Plural")] == "scholen"
+    assert note.fields[NOTE_FIELDS.index("Plural_Audio")] == " [sound:plural.mp3]"
 
 
 def test_build_example_slot_fields_keeps_each_audio_next_to_matching_sentence(tmp_path: Path) -> None:
@@ -251,3 +319,41 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
         media = json.loads(package.read("media").decode("utf-8"))
 
     assert sorted(media.values()) == ["participle.mp3", "past.mp3", "present.mp3", "word.mp3"]
+
+
+def test_deck_package_includes_plural_audio_media(tmp_path: Path) -> None:
+    settings = DeckSettings()
+    source_item = SourceItem(text="school", topic="De school", lesson="Lesson 3")
+    word_audio = tmp_path / "word.mp3"
+    plural_audio = tmp_path / "plural.mp3"
+    singular_example_audio = tmp_path / "singular-example.mp3"
+    plural_example_audio = tmp_path / "plural-example.mp3"
+    word_audio.write_bytes(b"word")
+    plural_audio.write_bytes(b"plural")
+    singular_example_audio.write_bytes(b"singular example")
+    plural_example_audio.write_bytes(b"plural example")
+    output_path = tmp_path / "school.apkg"
+
+    build_deck_package(
+        [(source_item, make_countable_noun_card())],
+        output_path,
+        "Lesson 3 - De school",
+        settings,
+        audio_by_guid={
+            build_note_guid(source_item): NoteAudio(
+                word_audio=word_audio,
+                plural_audio=plural_audio,
+                example_audios=(singular_example_audio, plural_example_audio),
+            )
+        },
+    )
+
+    with zipfile.ZipFile(output_path) as package:
+        media = json.loads(package.read("media").decode("utf-8"))
+
+    assert sorted(media.values()) == [
+        "plural-example.mp3",
+        "plural.mp3",
+        "singular-example.mp3",
+        "word.mp3",
+    ]

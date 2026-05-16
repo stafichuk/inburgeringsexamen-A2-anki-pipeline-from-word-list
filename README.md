@@ -192,6 +192,7 @@ The generated note type contains these fields:
 - `IPA`
 - `POS`
 - `Plural`
+- `Plural_Audio`
 - `Verb_Forms`
 - `Adjective_Forms`
 - `Word_Audio`
@@ -218,7 +219,7 @@ Card behavior:
 - Regular adjective cards do not list predictable endings as grammar fields, but examples must show both visible forms, e.g. `mooi` and `mooie`.
 - Onverbuigbare adjectives use one clear `single_form` example in a context where regular adjectives would normally take `-e`, e.g. `de gouden ring`.
 - Back side shows Dutch, IPA, grammar details, then the generated examples. Each example shows the form label, Russian sentence, Dutch sentence, and its matching audio reference when available.
-- `Word_Audio` and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
+- `Word_Audio`, `Plural_Audio`, and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
 
 ## Caching
 Each successful generation is cached locally in `.cache/cards/` by:
@@ -271,6 +272,7 @@ You can provide `audio.azure.endpoint` instead of `audio.azure.region` when you 
 
 When enabled, the app:
 - generates one MP3 for `Word_Audio` from the Dutch word
+- generates one MP3 for `Plural_Audio` when a plural form exists
 - generates one MP3 per populated example slot
 - reuses existing files in `audio.directory` for unchanged text, voice, and output format
 - writes Anki `[sound:...]` references into the note fields and bundles the media into the `.apkg`
