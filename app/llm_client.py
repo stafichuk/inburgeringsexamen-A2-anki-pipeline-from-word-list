@@ -25,6 +25,17 @@ class LLMClientError(RuntimeError):
 class LLMResponseFormatError(LLMClientError):
     """Raised when the provider returns malformed or invalid content."""
 
+    def __init__(self, message: str, *, raw_text: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_text = raw_text
+
+    def __str__(self) -> str:
+        message = super().__str__()
+        if self.raw_text is None:
+            return message
+        raw_text = self.raw_text.strip() or "<empty response>"
+        return f"{message}\nLLM response:\n{raw_text}"
+
 
 def extract_json_object(raw_text: str) -> str:
     """Attempt to extract a JSON object from raw model output."""
@@ -42,16 +53,20 @@ def extract_json_object(raw_text: str) -> str:
 
 def parse_generated_card(raw_text: str, *, allow_json_repair: bool = True) -> GeneratedCard:
     """Parse and validate a GeneratedCard from raw model output."""
-    json_text = extract_json_object(raw_text) if allow_json_repair else raw_text.strip()
+    try:
+        json_text = extract_json_object(raw_text) if allow_json_repair else raw_text.strip()
+    except LLMResponseFormatError as exc:
+        raise LLMResponseFormatError(str(exc), raw_text=raw_text) from exc
+
     try:
         payload = json.loads(json_text)
     except json.JSONDecodeError as exc:
-        raise LLMResponseFormatError(f"invalid JSON payload: {exc}") from exc
+        raise LLMResponseFormatError(f"invalid JSON payload: {exc}", raw_text=raw_text) from exc
 
     try:
         return GeneratedCard.model_validate(payload)
     except ValidationError as exc:
-        raise LLMResponseFormatError(f"JSON does not match schema: {exc}") from exc
+        raise LLMResponseFormatError(f"JSON does not match schema: {exc}", raw_text=raw_text) from exc
 
 
 @dataclass(slots=True)
