@@ -37,7 +37,7 @@ class FormExampleKind(str, Enum):
     DEFAULT = "default"
     PRESENT_TENSE = "present_tense"
     PAST_TENSE = "past_tense"
-    PAST_PARTICIPLE = "past_participle"
+    PERFECT_TENSE = "perfect_tense"
     BASE_FORM = "base_form"
     E_FORM = "e_form"
     SINGLE_FORM = "single_form"
@@ -49,7 +49,7 @@ FORM_EXAMPLE_KIND_ORDER = {
     FormExampleKind.DEFAULT: 30,
     FormExampleKind.PRESENT_TENSE: 40,
     FormExampleKind.PAST_TENSE: 50,
-    FormExampleKind.PAST_PARTICIPLE: 60,
+    FormExampleKind.PERFECT_TENSE: 60,
     FormExampleKind.BASE_FORM: 70,
     FormExampleKind.E_FORM: 80,
     FormExampleKind.SINGLE_FORM: 90,
@@ -91,16 +91,14 @@ class VerbForms(StrictModel):
     """Verb forms needed for learner-oriented Dutch cards."""
 
     infinitive: str
-    present_tense: str = Field(
-        description="Present singular forms including both 'ik ...' and 'hij ...', e.g. 'ik leer; hij leert'."
-    )
+    present_ik: str = Field(description="First-person singular present form, e.g. 'ik leer'.")
+    present_hij: str = Field(description="Third-person singular present form, e.g. 'hij leert'.")
     past_tense: str
-    past_participle: str
-    perfect_example: str | None = None
+    perfect_tense: str = Field(description="Compact perfect form, e.g. 'heeft geleerd'.")
     separable_prefix: str | None = None
     conjugation_notes: str | None = None
 
-    @field_validator("infinitive", "present_tense", "past_tense", "past_participle")
+    @field_validator("infinitive", "present_ik", "present_hij", "past_tense", "perfect_tense")
     @classmethod
     def ensure_required_text(cls, value: str) -> str:
         """Ensure required verb forms are non-empty strings."""
@@ -108,20 +106,23 @@ class VerbForms(StrictModel):
             raise ValueError("verb form fields must not be empty")
         return value
 
-    @field_validator("present_tense")
+    @field_validator("present_ik")
     @classmethod
-    def ensure_present_tense_has_ik_and_hij_forms(cls, value: str) -> str:
-        """Require the two present-tense forms most useful on learner cards."""
-        missing = [
-            pronoun
-            for pronoun in ("ik", "hij")
-            if re.search(rf"\b{pronoun}\b\s+\S+", value.lower()) is None
-        ]
-        if missing:
-            raise ValueError("present_tense must include both ik and hij forms")
+    def ensure_present_ik_has_pronoun(cls, value: str) -> str:
+        """Require the ik present-tense field to include its pronoun."""
+        if re.search(r"\bik\b\s+\S+", value.lower()) is None:
+            raise ValueError("present_ik must include an ik form")
         return value
 
-    @field_validator("perfect_example", "separable_prefix", "conjugation_notes")
+    @field_validator("present_hij")
+    @classmethod
+    def ensure_present_hij_has_pronoun(cls, value: str) -> str:
+        """Require the hij present-tense field to include its pronoun."""
+        if re.search(r"\bhij\b\s+\S+", value.lower()) is None:
+            raise ValueError("present_hij must include a hij form")
+        return value
+
+    @field_validator("separable_prefix", "conjugation_notes")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         """Reject blank optional strings."""
@@ -275,7 +276,7 @@ class GeneratedCard(StrictModel):
                 {
                     FormExampleKind.PRESENT_TENSE,
                     FormExampleKind.PAST_TENSE,
-                    FormExampleKind.PAST_PARTICIPLE,
+                    FormExampleKind.PERFECT_TENSE,
                 },
                 "verbs",
             )

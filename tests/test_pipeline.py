@@ -33,6 +33,9 @@ def make_settings(cache_dir: Path, *, parallelism: int = 4, audio_enabled: bool 
 
 
 def make_card(word: str) -> GeneratedCard:
+    present_ik = "ik leer" if word == "leren" else f"ik {word}"
+    present_hij = "hij leert" if word == "leren" else f"hij {word}t"
+    perfect_tense = "heeft geleerd" if word == "leren" else f"heeft {word} gebruikt"
     return GeneratedCard(
         dutch_word=word,
         russian_translation="учиться",
@@ -42,8 +45,8 @@ def make_card(word: str) -> GeneratedCard:
         form_examples=[
             {
                 "kind": "present_tense",
-                "form": word,
-                "example_sentence_nl": f"Ik gebruik {word} in de les.",
+                "form": present_ik,
+                "example_sentence_nl": f"{present_ik.capitalize()} in de les.",
                 "example_sentence_ru": f"Я использую {word} на уроке.",
             },
             {
@@ -53,18 +56,19 @@ def make_card(word: str) -> GeneratedCard:
                 "example_sentence_ru": f"Вчера я использовал {word}.",
             },
             {
-                "kind": "past_participle",
-                "form": "gebruikt",
-                "example_sentence_nl": f"Ik heb {word} gebruikt.",
+                "kind": "perfect_tense",
+                "form": perfect_tense,
+                "example_sentence_nl": f"Hij {perfect_tense}.",
                 "example_sentence_ru": f"Я использовал {word}.",
             },
         ],
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
-            present_tense=f"ik {word}; hij {word}t",
-            past_tense="leerde, leerden",
-            past_participle="geleerd",
+            present_ik=present_ik,
+            present_hij=present_hij,
+            past_tense="leerde",
+            perfect_tense=perfect_tense,
         ),
     )
 
@@ -178,6 +182,13 @@ class FailingExampleAudioGenerator(FakeAudioGenerator):
     def generate_audio(self, text: str, *, label: str) -> Path:
         if label == "example-past-tense":
             raise AudioGenerationError("example synthesis failed")
+        return super().generate_audio(text, label=label)
+
+
+class FailingVerbFormAudioGenerator(FakeAudioGenerator):
+    def generate_audio(self, text: str, *, label: str) -> Path:
+        if label == "verb-perfect":
+            raise AudioGenerationError("verb form synthesis failed")
         return super().generate_audio(text, label=label)
 
 
@@ -356,13 +367,20 @@ def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypat
     assert result.audio_failed_items == []
     assert audio_generator.calls == [
         ("word", "leren"),
-        ("example-present-tense", "Ik gebruik leren in de les."),
+        ("verb-infinitive", "leren"),
+        ("verb-present-ik", "ik leer"),
+        ("verb-present-hij", "hij leert"),
+        ("verb-past", "leerde"),
+        ("verb-perfect", "heeft geleerd"),
+        ("example-present-tense", "Ik leer in de les."),
         ("example-past-tense", "Ik gebruikte leren gisteren."),
-        ("example-past-participle", "Ik heb leren gebruikt."),
+        ("example-perfect-tense", "Hij heeft geleerd."),
     ]
     assert len(captured_audio_by_guid) == 1
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.word_audio is not None
+    assert audio.verb_form_audio is not None
+    assert all(verb_audio is not None for verb_audio in audio.verb_form_audio.paths())
     assert len(audio.example_audios) == 3
     assert all(example_audio is not None for example_audio in audio.example_audios)
 
@@ -399,6 +417,40 @@ def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeyp
     assert audio.plural_audio is not None
 
 
+def test_pipeline_reports_partial_verb_form_audio_failures(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    captured_audio_by_guid = {}
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_audio_by_guid.update(audio_by_guid or {})
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=FakeClient(),
+        audio_generator=FailingVerbFormAudioGenerator(tmp_path / "audio"),
+    ).run(input_path=input_path, output_path=output_path)
+
+    assert output_path.exists()
+    assert result.generated_items == 1
+    assert len(result.audio_failed_items) == 1
+    assert result.audio_failed_items[0].source_word == "leren"
+    assert result.audio_failed_items[0].field_name == "Verb_Perfect_Audio"
+    audio = next(iter(captured_audio_by_guid.values()))
+    assert audio.verb_form_audio is not None
+    assert audio.verb_form_audio.infinitive_audio is not None
+    assert audio.verb_form_audio.present_ik_audio is not None
+    assert audio.verb_form_audio.present_hij_audio is not None
+    assert audio.verb_form_audio.past_audio is not None
+    assert audio.verb_form_audio.perfect_audio is None
+
+
 def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) -> None:
     input_path = tmp_path / "words.txt"
     input_path.write_text("leren\n", encoding="utf-8")
@@ -426,6 +478,8 @@ def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) ->
     assert result.audio_failed_items[0].field_name == "Example_2_Audio"
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.word_audio is not None
+    assert audio.verb_form_audio is not None
+    assert all(verb_audio is not None for verb_audio in audio.verb_form_audio.paths())
     assert audio.example_audios[0] is not None
     assert audio.example_audios[1] is None
     assert audio.example_audios[2] is not None

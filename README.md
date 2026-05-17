@@ -163,7 +163,7 @@ Core fields:
 POS-specific fields:
 - countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`, and `singular` / `plural` examples
 - uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example
-- verbs: `verb_forms`, with `present_tense` showing both `ik` and `hij` forms, plus `present_tense`, `past_tense`, and `past_participle` examples
+- verbs: `verb_forms`, with editable learner-visible forms for `infinitive`, `present_ik`, `present_hij`, `past_tense`, and `perfect_tense`, plus `present_tense`, `past_tense`, and `perfect_tense` examples
 - adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
 - adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
 
@@ -207,7 +207,17 @@ The generated note type contains these fields:
 - `POS`
 - `Plural`
 - `Plural_Audio`
-- `Verb_Forms`
+- `Verb_Infinitive`
+- `Verb_Infinitive_Audio`
+- `Verb_Present_Ik`
+- `Verb_Present_Ik_Audio`
+- `Verb_Present_Hij`
+- `Verb_Present_Hij_Audio`
+- `Verb_Past`
+- `Verb_Past_Audio`
+- `Verb_Perfect`
+- `Verb_Perfect_Audio`
+- `Verb_Notes`
 - `Adjective_Forms`
 - `Word_Audio`
 - `Example_1_Form`
@@ -232,8 +242,9 @@ Card behavior:
 - Uncountable noun cards keep the front hint plain and do not add `(множественное число?)`.
 - Regular adjective cards do not list predictable endings as grammar fields, but examples must show both visible forms, e.g. `mooi` and `mooie`.
 - Onverbuigbare adjectives use one clear `single_form` example in a context where regular adjectives would normally take `-e`, e.g. `de gouden ring`.
+- Verb cards store each learner-visible form in its own field, e.g. `leren`, `ik leer`, `hij leert`, `leerde`, and `heeft geleerd`, with paired audio fields so HyperTTS can regenerate individual form audio after manual corrections.
 - Back side shows Dutch, IPA, grammar details, then the generated examples. Each example shows the form label, Russian sentence, Dutch sentence, and its matching audio reference when available.
-- `Word_Audio`, `Plural_Audio`, and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
+- `Word_Audio`, `Plural_Audio`, verb-form audio fields, and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
 
 ## Caching
 Each successful generation is cached locally in `.cache/cards/` by:
@@ -288,6 +299,7 @@ You can provide `audio.azure.endpoint` instead of `audio.azure.region` when you 
 When enabled, the app:
 - generates one MP3 for `Word_Audio` from the Dutch word
 - generates one MP3 for `Plural_Audio` when a plural form exists
+- generates one MP3 for each populated verb form field
 - generates one MP3 per populated example slot
 - reuses existing files in `audio.directory` for unchanged text, voice, and output format
 - writes Anki `[sound:...]` references into the note fields and bundles the media into the `.apkg`

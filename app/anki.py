@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import hashlib
 import html
 from pathlib import Path
-import re
 
 import genanki
 
@@ -31,7 +30,17 @@ NOTE_FIELDS = [
     "POS",
     "Plural",
     "Plural_Audio",
-    "Verb_Forms",
+    "Verb_Infinitive",
+    "Verb_Infinitive_Audio",
+    "Verb_Present_Ik",
+    "Verb_Present_Ik_Audio",
+    "Verb_Present_Hij",
+    "Verb_Present_Hij_Audio",
+    "Verb_Past",
+    "Verb_Past_Audio",
+    "Verb_Perfect",
+    "Verb_Perfect_Audio",
+    "Verb_Notes",
     "Adjective_Forms",
     "Word_Audio",
     "Example_1_Form",
@@ -88,6 +97,15 @@ DEFAULT_CSS = """
   font-weight: bold;
   margin-bottom: 4px;
 }
+.verb-form {
+  margin-top: 4px;
+}
+.verb-label {
+  font-weight: bold;
+}
+.verb-notes {
+  margin-top: 6px;
+}
 """
 
 EXAMPLE_KIND_LABELS = {
@@ -96,7 +114,7 @@ EXAMPLE_KIND_LABELS = {
     FormExampleKind.DEFAULT: "Voorbeeld",
     FormExampleKind.PRESENT_TENSE: "Tegenwoordige tijd",
     FormExampleKind.PAST_TENSE: "Verleden tijd",
-    FormExampleKind.PAST_PARTICIPLE: "Voltooid deelwoord",
+    FormExampleKind.PERFECT_TENSE: "Perfectum",
     FormExampleKind.BASE_FORM: "Zonder -e",
     FormExampleKind.E_FORM: "Met -e",
     FormExampleKind.SINGLE_FORM: "Onverbuigbaar",
@@ -110,11 +128,33 @@ def stable_anki_id(seed: str) -> int:
 
 
 @dataclass(frozen=True, slots=True)
+class VerbFormAudio:
+    """Audio media files attached to individual verb form fields."""
+
+    infinitive_audio: Path | None = None
+    present_ik_audio: Path | None = None
+    present_hij_audio: Path | None = None
+    past_audio: Path | None = None
+    perfect_audio: Path | None = None
+
+    def paths(self) -> tuple[Path | None, ...]:
+        """Return verb-form audio paths in note-field order."""
+        return (
+            self.infinitive_audio,
+            self.present_ik_audio,
+            self.present_hij_audio,
+            self.past_audio,
+            self.perfect_audio,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class NoteAudio:
     """Audio media files attached to one generated note."""
 
     word_audio: Path | None = None
     plural_audio: Path | None = None
+    verb_form_audio: VerbFormAudio | None = None
     example_audios: tuple[Path | None, ...] = ()
 
 
@@ -143,7 +183,15 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <hr id="answer">
 <div class="word">{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}{{Plural_Audio}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
-{{#Verb_Forms}}<div class="grammar"><span class="label">Werkwoordsvormen:</span><br>{{Verb_Forms}}</div>{{/Verb_Forms}}
+{{#Verb_Infinitive}}<div class="grammar">
+  <div class="label">Werkwoordsvormen:</div>
+  <div class="verb-form"><span class="verb-label">Infinitive:</span> {{Verb_Infinitive}}{{Verb_Infinitive_Audio}}</div>
+  <div class="verb-form"><span class="verb-label">Tegenwoordige tijd:</span> {{Verb_Present_Ik}}{{Verb_Present_Ik_Audio}}</div>
+  <div class="verb-form">{{Verb_Present_Hij}}{{Verb_Present_Hij_Audio}}</div>
+  <div class="verb-form"><span class="verb-label">Verleden tijd:</span> {{Verb_Past}}{{Verb_Past_Audio}}</div>
+  <div class="verb-form"><span class="verb-label">Perfectum:</span> {{Verb_Perfect}}{{Verb_Perfect_Audio}}</div>
+  {{#Verb_Notes}}<div class="verb-notes">{{Verb_Notes}}</div>{{/Verb_Notes}}
+</div>{{/Verb_Infinitive}}
 {{#Adjective_Forms}}<div class="grammar"><span class="label">Bijvoeglijk naamwoord:</span><br>{{Adjective_Forms}}</div>{{/Adjective_Forms}}
 <div class="examples">
   <div class="label">Voorbeelden:</div>
@@ -175,28 +223,36 @@ def _join_html_lines(lines: list[str]) -> str:
     return "<br>".join(html.escape(line) for line in lines if line.strip())
 
 
-def _split_present_tense_forms(present_tense: str) -> list[str]:
-    """Split compact present-tense forms into display lines."""
-    return [form.strip() for form in re.split(r"[\n;,]+", present_tense) if form.strip()]
-
-
 def format_verb_forms(verb_forms: VerbForms | None) -> str:
-    """Format verb forms for the Anki back side."""
+    """Format verb forms for plain-text display contexts."""
     if verb_forms is None:
         return ""
-    present_tense_lines = _split_present_tense_forms(verb_forms.present_tense)
     lines = [
         f"Infinitive: {verb_forms.infinitive}",
-        f"Tegenwoordige tijd: {present_tense_lines[0]}",
-        *present_tense_lines[1:],
+        f"Tegenwoordige tijd: {verb_forms.present_ik}",
+        verb_forms.present_hij,
         f"Verleden tijd: {verb_forms.past_tense}",
-        f"Voltooid deelwoord: {verb_forms.past_participle}",
+        f"Perfectum: {verb_forms.perfect_tense}",
     ]
+    lines.extend(_verb_note_lines(verb_forms))
+    return _join_html_lines(lines)
+
+
+def _verb_note_lines(verb_forms: VerbForms) -> list[str]:
+    """Build optional verb note lines."""
+    lines: list[str] = []
     if verb_forms.separable_prefix:
         lines.append(f"Separable prefix: {verb_forms.separable_prefix}")
     if verb_forms.conjugation_notes:
         lines.append(f"Notes: {verb_forms.conjugation_notes}")
-    return _join_html_lines(lines)
+    return lines
+
+
+def format_verb_notes(verb_forms: VerbForms | None) -> str:
+    """Format non-form verb notes for the Anki back side."""
+    if verb_forms is None:
+        return ""
+    return _join_html_lines(_verb_note_lines(verb_forms))
 
 
 def format_adjective_forms(adjective_forms: AdjectiveForms | None) -> str:
@@ -254,6 +310,28 @@ def format_example_form(example: FormExample) -> str:
     return html.escape(f"{label}: {example.form}")
 
 
+def build_verb_form_fields(card: GeneratedCard, audio: NoteAudio | None = None) -> list[str]:
+    """Build editable verb form fields with paired audio fields."""
+    if card.verb_forms is None:
+        return [""] * 11
+
+    verb_forms = card.verb_forms
+    verb_audio = audio.verb_form_audio if audio else None
+    return [
+        html.escape(verb_forms.infinitive),
+        format_audio_reference(verb_audio.infinitive_audio if verb_audio else None),
+        html.escape(verb_forms.present_ik),
+        format_audio_reference(verb_audio.present_ik_audio if verb_audio else None),
+        html.escape(verb_forms.present_hij),
+        format_audio_reference(verb_audio.present_hij_audio if verb_audio else None),
+        html.escape(verb_forms.past_tense),
+        format_audio_reference(verb_audio.past_audio if verb_audio else None),
+        html.escape(verb_forms.perfect_tense),
+        format_audio_reference(verb_audio.perfect_audio if verb_audio else None),
+        format_verb_notes(verb_forms),
+    ]
+
+
 def build_example_slot_fields(card: GeneratedCard, audio: NoteAudio | None = None) -> list[str]:
     """Build the fixed example slot fields used by the note model."""
     examples = card.ordered_form_examples()
@@ -294,7 +372,7 @@ def build_note(
         format_part_of_speech(card),
         html.escape(card.plural_form or ""),
         format_audio_reference(audio.plural_audio if audio and card.plural_form else None),
-        format_verb_forms(card.verb_forms),
+        *build_verb_form_fields(card, audio),
         format_adjective_forms(card.adjective_forms),
         format_audio_reference(audio.word_audio if audio else None),
         *build_example_slot_fields(card, audio),
@@ -326,6 +404,8 @@ def build_deck_package(
             media_paths = [audio.word_audio]
             if card.plural_form:
                 media_paths.append(audio.plural_audio)
+            if card.verb_forms and audio.verb_form_audio:
+                media_paths.extend(audio.verb_form_audio.paths())
             media_paths.extend(audio.example_audios)
             for media_path in media_paths:
                 if media_path is not None and media_path not in seen_media_files:

@@ -1,6 +1,6 @@
 from pydantic import ValidationError
 
-from app.models import GeneratedCard
+from app.models import GeneratedCard, VerbForms
 
 
 def test_generated_card_accepts_valid_countable_noun_payload() -> None:
@@ -170,7 +170,7 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
         "form_examples": [
             {
                 "kind": "present_tense",
-                "form": "leer",
+                "form": "ik leer",
                 "example_sentence_nl": "Ik leer Nederlands op school.",
                 "example_sentence_ru": "Я учу нидерландский в школе.",
             },
@@ -181,9 +181,9 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
                 "example_sentence_ru": "Вчера я учил новые слова.",
             },
             {
-                "kind": "past_participle",
-                "form": "geleerd",
-                "example_sentence_nl": "Ik heb veel geleerd.",
+                "kind": "perfect_tense",
+                "form": "heeft geleerd",
+                "example_sentence_nl": "Hij heeft veel geleerd.",
                 "example_sentence_ru": "Я многому научился.",
             },
         ],
@@ -192,10 +192,10 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
         "front_hint": None,
         "verb_forms": {
             "infinitive": "leren",
-            "present_tense": "ik leer; hij leert",
-            "past_tense": "leerde, leerden",
-            "past_participle": "geleerd",
-            "perfect_example": "Ik heb Nederlands geleerd.",
+            "present_ik": "ik leer",
+            "present_hij": "hij leert",
+            "past_tense": "leerde",
+            "perfect_tense": "heeft geleerd",
             "separable_prefix": None,
             "conjugation_notes": "regular weak verb",
         },
@@ -208,11 +208,11 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
     assert [example.kind.value for example in card.ordered_form_examples()] == [
         "present_tense",
         "past_tense",
-        "past_participle",
+        "perfect_tense",
     ]
 
 
-def test_generated_card_rejects_verb_without_past_participle_example() -> None:
+def test_generated_card_rejects_verb_without_perfect_tense_example() -> None:
     payload = {
         "dutch_word": "leren",
         "russian_translation": "учиться",
@@ -222,7 +222,7 @@ def test_generated_card_rejects_verb_without_past_participle_example() -> None:
         "form_examples": [
             {
                 "kind": "present_tense",
-                "form": "leer",
+                "form": "ik leer",
                 "example_sentence_nl": "Ik leer Nederlands op school.",
                 "example_sentence_ru": "Я учу нидерландский в школе.",
             },
@@ -238,9 +238,10 @@ def test_generated_card_rejects_verb_without_past_participle_example() -> None:
         "front_hint": None,
         "verb_forms": {
             "infinitive": "leren",
-            "present_tense": "ik leer; hij leert",
-            "past_tense": "leerde, leerden",
-            "past_participle": "geleerd",
+            "present_ik": "ik leer",
+            "present_hij": "hij leert",
+            "past_tense": "leerde",
+            "perfect_tense": "heeft geleerd",
         },
         "adjective_forms": None,
     }
@@ -249,12 +250,12 @@ def test_generated_card_rejects_verb_without_past_participle_example() -> None:
         GeneratedCard.model_validate(payload)
     except ValidationError as exc:
         assert "verbs" in str(exc)
-        assert "past_participle" in str(exc)
+        assert "perfect_tense" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("validation should have failed")
 
 
-def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
+def test_generated_card_rejects_verb_without_hij_present_tense_pronoun() -> None:
     payload = {
         "dutch_word": "leren",
         "russian_translation": "учиться",
@@ -264,7 +265,7 @@ def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
         "form_examples": [
             {
                 "kind": "present_tense",
-                "form": "leer",
+                "form": "ik leer",
                 "example_sentence_nl": "Ik leer Nederlands op school.",
                 "example_sentence_ru": "Я учу нидерландский в школе.",
             },
@@ -275,9 +276,9 @@ def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
                 "example_sentence_ru": "Вчера я учил новые слова.",
             },
             {
-                "kind": "past_participle",
-                "form": "geleerd",
-                "example_sentence_nl": "Ik heb veel geleerd.",
+                "kind": "perfect_tense",
+                "form": "heeft geleerd",
+                "example_sentence_nl": "Hij heeft veel geleerd.",
                 "example_sentence_ru": "Я многому научился.",
             },
         ],
@@ -286,9 +287,10 @@ def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
         "front_hint": None,
         "verb_forms": {
             "infinitive": "leren",
-            "present_tense": "ik leer",
-            "past_tense": "leerde, leerden",
-            "past_participle": "geleerd",
+            "present_ik": "ik leer",
+            "present_hij": "leert",
+            "past_tense": "leerde",
+            "perfect_tense": "heeft geleerd",
         },
         "adjective_forms": None,
     }
@@ -296,7 +298,45 @@ def test_generated_card_rejects_verb_without_hij_present_tense_form() -> None:
     try:
         GeneratedCard.model_validate(payload)
     except ValidationError as exc:
-        assert "ik and hij" in str(exc)
+        assert "present_hij" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
+def test_verb_forms_reject_present_ik_without_expected_pronoun() -> None:
+    try:
+        VerbForms(
+            infinitive="leren",
+            present_ik="leer",
+            present_hij="hij leert",
+            past_tense="leerde",
+            perfect_tense="heeft geleerd",
+        )
+    except ValidationError as exc:
+        assert "present_ik" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
+def test_verb_forms_reject_removed_legacy_fields() -> None:
+    try:
+        VerbForms.model_validate(
+            {
+                "infinitive": "leren",
+                "present_tense": "ik leer; hij leert",
+                "past_tense": "leerde",
+                "past_participle": "geleerd",
+                "perfect_example": "Ik heb Nederlands geleerd.",
+            }
+        )
+    except ValidationError as exc:
+        message = str(exc)
+        assert "present_ik" in message
+        assert "present_hij" in message
+        assert "perfect_tense" in message
+        assert "present_tense" in message
+        assert "past_participle" in message
+        assert "perfect_example" in message
     else:  # pragma: no cover
         raise AssertionError("validation should have failed")
 

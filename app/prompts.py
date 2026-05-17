@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-05-16.2"
+PROMPT_VERSION = "2026-05-17.1"
 
 
 def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
@@ -53,7 +53,7 @@ Rules:
 - Every form_examples entry must use the exact visible Dutch form in the form field, and that form must appear in example_sentence_nl.
 - For countable nouns, include the article directly in dutch_word, e.g. "de school" or "het huis"; include plural_form and front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'школа (множественное число?)'. Include exactly two form_examples: singular and plural.
 - For uncountable nouns, include the article directly in dutch_word, include front_hint, set plural_form to null, and do not add '(множественное число?)' to front_hint. Include exactly one default form_example.
-- For verbs, include verb_forms with infinitive, present_tense, past_tense, past_participle, and optionally perfect_example, separable_prefix, conjugation_notes. Set verb_forms.present_tense to the two learner-visible singular present forms: "ik ..." and "hij ...", e.g. "ik leer; hij leert". Include exactly three form_examples: present_tense, past_tense, and past_participle. The form value must be the specific Dutch form used in that example sentence, not a full conjugation table.
+- For verbs, include verb_forms with infinitive, present_ik, present_hij, past_tense, perfect_tense, and optionally separable_prefix and conjugation_notes. Use learner-visible compact forms, e.g. infinitive "leren", present_ik "ik leer", present_hij "hij leert", past_tense "leerde", perfect_tense "heeft geleerd". Include exactly three form_examples: present_tense, past_tense, and perfect_tense. The form value must be the specific Dutch form used in that example sentence, not a full conjugation table.
 - For regular adjectives with two visible forms, set adjective_forms to null and include exactly two form_examples: base_form and e_form. The form values must be the exact adjective forms, e.g. "mooi" and "mooie".
 - For adjectives without a distinct -e form, include exactly one single_form example. Choose a sentence where a regular adjective would normally show -e, e.g. "de gouden ring", not an ambiguous context like "een gouden huis". Include adjective_forms only if an exception note is useful.
 - For other single-form words, include exactly one default form_example.

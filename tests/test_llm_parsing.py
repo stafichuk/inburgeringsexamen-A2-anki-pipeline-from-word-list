@@ -13,7 +13,7 @@ VALID_JSON = """
   "form_examples": [
     {
       "kind": "present_tense",
-      "form": "leer",
+      "form": "ik leer",
       "example_sentence_nl": "Ik leer Nederlands op school.",
       "example_sentence_ru": "Я учу нидерландский в школе."
     },
@@ -24,9 +24,9 @@ VALID_JSON = """
       "example_sentence_ru": "Вчера я учил новые слова."
     },
     {
-      "kind": "past_participle",
-      "form": "geleerd",
-      "example_sentence_nl": "Ik heb Nederlands geleerd.",
+      "kind": "perfect_tense",
+      "form": "heeft geleerd",
+      "example_sentence_nl": "Hij heeft Nederlands geleerd.",
       "example_sentence_ru": "Я выучил нидерландский."
     }
   ],
@@ -35,10 +35,10 @@ VALID_JSON = """
   "front_hint": null,
   "verb_forms": {
     "infinitive": "leren",
-    "present_tense": "ik leer; hij leert",
-    "past_tense": "leerde, leerden",
-    "past_participle": "geleerd",
-    "perfect_example": "Ik heb Nederlands geleerd.",
+    "present_ik": "ik leer",
+    "present_hij": "hij leert",
+    "past_tense": "leerde",
+    "perfect_tense": "heeft geleerd",
     "separable_prefix": null,
     "conjugation_notes": "regular weak verb"
   },
@@ -57,7 +57,7 @@ def test_extract_json_object_handles_fenced_response() -> None:
 def test_parse_generated_card_accepts_valid_json() -> None:
     card = parse_generated_card(VALID_JSON)
     assert card.verb_forms is not None
-    assert card.verb_forms.past_participle == "geleerd"
+    assert card.verb_forms.perfect_tense == "heeft geleerd"
     assert len(card.form_examples) == 3
 
 

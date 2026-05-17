@@ -5,11 +5,13 @@ import zipfile
 from app.anki import (
     NOTE_FIELDS,
     NoteAudio,
+    VerbFormAudio,
     build_deck_package,
     build_example_slot_fields,
     build_front,
     build_note,
     build_note_guid,
+    build_verb_form_fields,
     create_note_model,
     format_adjective_forms,
     format_verb_forms,
@@ -19,8 +21,8 @@ from app.models import AdjectiveForms, GeneratedCard, SourceItem, VerbForms
 
 
 def make_card(word: str = "leren") -> GeneratedCard:
-    present_form = "leer" if word == "leren" else word
-    hij_form = "leert" if word == "leren" else f"{word}t"
+    present_ik = "ik leer" if word == "leren" else f"ik {word}"
+    present_hij = "hij leert" if word == "leren" else f"hij {word}t"
     return GeneratedCard(
         dutch_word=word,
         russian_translation="учиться",
@@ -30,8 +32,8 @@ def make_card(word: str = "leren") -> GeneratedCard:
         form_examples=[
             {
                 "kind": "present_tense",
-                "form": present_form,
-                "example_sentence_nl": f"Ik {present_form} Nederlands op school.",
+                "form": present_ik,
+                "example_sentence_nl": f"{present_ik.capitalize()} Nederlands op school.",
                 "example_sentence_ru": "Я учу нидерландский в школе.",
             },
             {
@@ -41,19 +43,19 @@ def make_card(word: str = "leren") -> GeneratedCard:
                 "example_sentence_ru": "Вчера я учил новые слова.",
             },
             {
-                "kind": "past_participle",
-                "form": "geleerd",
-                "example_sentence_nl": "Ik heb Nederlands geleerd.",
+                "kind": "perfect_tense",
+                "form": "heeft geleerd",
+                "example_sentence_nl": "Hij heeft Nederlands geleerd.",
                 "example_sentence_ru": "Я выучил нидерландский.",
             },
         ],
         tags=["school", "verb"],
         verb_forms=VerbForms(
             infinitive=word,
-            present_tense=f"ik {present_form}; hij {hij_form}",
-            past_tense="leerde, leerden",
-            past_participle="geleerd",
-            perfect_example="Ik heb Nederlands geleerd.",
+            present_ik=present_ik,
+            present_hij=present_hij,
+            past_tense="leerde",
+            perfect_tense="heeft geleerd",
             conjugation_notes="regular weak verb",
         ),
     )
@@ -115,7 +117,18 @@ def test_note_model_contains_expected_fields() -> None:
     assert "Example_NL" not in model_field_names
     assert "Example_RU" not in model_field_names
     assert "Example_Audio" not in model_field_names
+    assert "Verb_Forms" not in model_field_names
     assert "Plural_Audio" in model_field_names
+    assert "Verb_Infinitive" in model_field_names
+    assert "Verb_Infinitive_Audio" in model_field_names
+    assert "Verb_Present_Ik" in model_field_names
+    assert "Verb_Present_Ik_Audio" in model_field_names
+    assert "Verb_Present_Hij" in model_field_names
+    assert "Verb_Present_Hij_Audio" in model_field_names
+    assert "Verb_Past" in model_field_names
+    assert "Verb_Past_Audio" in model_field_names
+    assert "Verb_Perfect" in model_field_names
+    assert "Verb_Perfect_Audio" in model_field_names
     assert "Example_1_Form" in model_field_names
     assert "Example_3_Audio" in model_field_names
 
@@ -137,6 +150,12 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "{{Example_2_NL}}{{Example_2_Audio}}" in template
     assert "{{Example_3_NL}}{{Example_3_Audio}}" in template
     assert "Werkwoordsvormen:" in template
+    assert "{{Verb_Forms}}" not in template
+    assert "{{Verb_Infinitive}}{{Verb_Infinitive_Audio}}" in template
+    assert "{{Verb_Present_Ik}}{{Verb_Present_Ik_Audio}}" in template
+    assert "{{Verb_Present_Hij}}{{Verb_Present_Hij_Audio}}" in template
+    assert "{{Verb_Past}}{{Verb_Past_Audio}}" in template
+    assert "{{Verb_Perfect}}{{Verb_Perfect_Audio}}" in template
     assert "Bijvoeglijk naamwoord:" in template
     assert "Lesson:" not in template
     assert "Topic:" not in template
@@ -207,10 +226,17 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
     model = create_note_model(DeckSettings())
     audio = NoteAudio(
         word_audio=tmp_path / "word.mp3",
+        verb_form_audio=VerbFormAudio(
+            infinitive_audio=tmp_path / "verb-infinitive.mp3",
+            present_ik_audio=tmp_path / "verb-present-ik.mp3",
+            present_hij_audio=tmp_path / "verb-present-hij.mp3",
+            past_audio=tmp_path / "verb-past.mp3",
+            perfect_audio=tmp_path / "verb-perfect.mp3",
+        ),
         example_audios=(
             tmp_path / "present.mp3",
             tmp_path / "past.mp3",
-            tmp_path / "participle.mp3",
+            tmp_path / "perfect.mp3",
         ),
     )
 
@@ -218,9 +244,19 @@ def test_build_note_includes_sound_references(tmp_path: Path) -> None:
 
     assert note.fields[NOTE_FIELDS.index("Word_Audio")] == " [sound:word.mp3]"
     assert note.fields[NOTE_FIELDS.index("Plural_Audio")] == ""
+    assert note.fields[NOTE_FIELDS.index("Verb_Infinitive")] == "leren"
+    assert note.fields[NOTE_FIELDS.index("Verb_Infinitive_Audio")] == " [sound:verb-infinitive.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Verb_Present_Ik")] == "ik leer"
+    assert note.fields[NOTE_FIELDS.index("Verb_Present_Ik_Audio")] == " [sound:verb-present-ik.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Verb_Present_Hij")] == "hij leert"
+    assert note.fields[NOTE_FIELDS.index("Verb_Present_Hij_Audio")] == " [sound:verb-present-hij.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Verb_Past")] == "leerde"
+    assert note.fields[NOTE_FIELDS.index("Verb_Past_Audio")] == " [sound:verb-past.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Verb_Perfect")] == "heeft geleerd"
+    assert note.fields[NOTE_FIELDS.index("Verb_Perfect_Audio")] == " [sound:verb-perfect.mp3]"
     assert note.fields[NOTE_FIELDS.index("Example_1_Audio")] == " [sound:present.mp3]"
     assert note.fields[NOTE_FIELDS.index("Example_2_Audio")] == " [sound:past.mp3]"
-    assert note.fields[NOTE_FIELDS.index("Example_3_Audio")] == " [sound:participle.mp3]"
+    assert note.fields[NOTE_FIELDS.index("Example_3_Audio")] == " [sound:perfect.mp3]"
 
 
 def test_build_note_includes_plural_sound_reference_for_countable_nouns(tmp_path: Path) -> None:
@@ -269,13 +305,13 @@ def test_build_example_slot_fields_keeps_each_audio_next_to_matching_sentence(tm
             example_audios=(
                 tmp_path / "present.mp3",
                 tmp_path / "past.mp3",
-                tmp_path / "participle.mp3",
+                tmp_path / "perfect.mp3",
             )
         ),
     )
 
     assert fields == [
-        "Tegenwoordige tijd: leer",
+        "Tegenwoordige tijd: ik leer",
         "Ik leer Nederlands op school.",
         "Я учу нидерландский в школе.",
         " [sound:present.mp3]",
@@ -283,10 +319,39 @@ def test_build_example_slot_fields_keeps_each_audio_next_to_matching_sentence(tm
         "Ik leerde gisteren nieuwe woorden.",
         "Вчера я учил новые слова.",
         " [sound:past.mp3]",
-        "Voltooid deelwoord: geleerd",
-        "Ik heb Nederlands geleerd.",
+        "Perfectum: heeft geleerd",
+        "Hij heeft Nederlands geleerd.",
         "Я выучил нидерландский.",
-        " [sound:participle.mp3]",
+        " [sound:perfect.mp3]",
+    ]
+
+
+def test_build_verb_form_fields_keeps_each_form_editable_with_audio(tmp_path: Path) -> None:
+    fields = build_verb_form_fields(
+        make_card(),
+        NoteAudio(
+            verb_form_audio=VerbFormAudio(
+                infinitive_audio=tmp_path / "infinitive.mp3",
+                present_ik_audio=tmp_path / "present-ik.mp3",
+                present_hij_audio=tmp_path / "present-hij.mp3",
+                past_audio=tmp_path / "past.mp3",
+                perfect_audio=tmp_path / "perfect.mp3",
+            )
+        ),
+    )
+
+    assert fields == [
+        "leren",
+        " [sound:infinitive.mp3]",
+        "ik leer",
+        " [sound:present-ik.mp3]",
+        "hij leert",
+        " [sound:present-hij.mp3]",
+        "leerde",
+        " [sound:past.mp3]",
+        "heeft geleerd",
+        " [sound:perfect.mp3]",
+        "Notes: regular weak verb",
     ]
 
 
@@ -301,32 +366,35 @@ def test_format_adjective_forms_only_shows_indeclinable_note() -> None:
     assert formatted == "Onverbuigbaar: ja<br>Voorbeeld: de gouden ring<br>Note: Stofadjectief op -en."
 
 
-def test_format_verb_forms_shows_ik_and_hij_present_forms_on_separate_lines() -> None:
+def test_format_verb_forms_shows_each_visible_form_on_separate_lines() -> None:
     formatted = format_verb_forms(
         VerbForms(
             infinitive="leren",
-            present_tense="ik leer; hij leert",
-            past_tense="leerde, leerden",
-            past_participle="geleerd",
+            present_ik="ik leer",
+            present_hij="hij leert",
+            past_tense="leerde",
+            perfect_tense="heeft geleerd",
         )
     )
 
     assert "Tegenwoordige tijd: ik leer<br>hij leert" in formatted
+    assert "Verleden tijd: leerde" in formatted
+    assert "Perfectum: heeft geleerd" in formatted
 
 
-def test_format_verb_forms_omits_perfectum_but_keeps_past_participle() -> None:
+def test_format_verb_forms_omits_removed_perfect_example() -> None:
     formatted = format_verb_forms(
         VerbForms(
             infinitive="groeien",
-            present_tense="ik groei; hij groeit",
+            present_ik="ik groei",
+            present_hij="hij groeit",
             past_tense="groeide",
-            past_participle="gegroeid",
-            perfect_example="De kinderen zijn snel gegroeid.",
+            perfect_tense="is gegroeid",
         )
     )
 
-    assert "Voltooid deelwoord: gegroeid" in formatted
-    assert "Perfectum:" not in formatted
+    assert "Perfectum: is gegroeid" in formatted
+    assert "Voltooid deelwoord:" not in formatted
     assert "De kinderen zijn snel gegroeid." not in formatted
 
 
@@ -336,11 +404,21 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
     word_audio = tmp_path / "word.mp3"
     present_audio = tmp_path / "present.mp3"
     past_audio = tmp_path / "past.mp3"
-    participle_audio = tmp_path / "participle.mp3"
+    perfect_audio = tmp_path / "perfect.mp3"
+    verb_infinitive_audio = tmp_path / "verb-infinitive.mp3"
+    verb_present_ik_audio = tmp_path / "verb-present-ik.mp3"
+    verb_present_hij_audio = tmp_path / "verb-present-hij.mp3"
+    verb_past_audio = tmp_path / "verb-past.mp3"
+    verb_perfect_audio = tmp_path / "verb-perfect.mp3"
     word_audio.write_bytes(b"word")
     present_audio.write_bytes(b"present")
     past_audio.write_bytes(b"past")
-    participle_audio.write_bytes(b"participle")
+    perfect_audio.write_bytes(b"perfect")
+    verb_infinitive_audio.write_bytes(b"verb infinitive")
+    verb_present_ik_audio.write_bytes(b"verb present ik")
+    verb_present_hij_audio.write_bytes(b"verb present hij")
+    verb_past_audio.write_bytes(b"verb past")
+    verb_perfect_audio.write_bytes(b"verb perfect")
     output_path = tmp_path / "school.apkg"
 
     build_deck_package(
@@ -351,7 +429,14 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
         audio_by_guid={
             build_note_guid(source_item): NoteAudio(
                 word_audio=word_audio,
-                example_audios=(present_audio, past_audio, participle_audio),
+                verb_form_audio=VerbFormAudio(
+                    infinitive_audio=verb_infinitive_audio,
+                    present_ik_audio=verb_present_ik_audio,
+                    present_hij_audio=verb_present_hij_audio,
+                    past_audio=verb_past_audio,
+                    perfect_audio=verb_perfect_audio,
+                ),
+                example_audios=(present_audio, past_audio, perfect_audio),
             )
         },
     )
@@ -359,7 +444,17 @@ def test_deck_package_includes_audio_media(tmp_path: Path) -> None:
     with zipfile.ZipFile(output_path) as package:
         media = json.loads(package.read("media").decode("utf-8"))
 
-    assert sorted(media.values()) == ["participle.mp3", "past.mp3", "present.mp3", "word.mp3"]
+    assert sorted(media.values()) == [
+        "past.mp3",
+        "perfect.mp3",
+        "present.mp3",
+        "verb-infinitive.mp3",
+        "verb-past.mp3",
+        "verb-perfect.mp3",
+        "verb-present-hij.mp3",
+        "verb-present-ik.mp3",
+        "word.mp3",
+    ]
 
 
 def test_deck_package_includes_plural_audio_media(tmp_path: Path) -> None:

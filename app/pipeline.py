@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from .anki import NoteAudio, build_deck_package, build_note_guid
+from .anki import NoteAudio, VerbFormAudio, build_deck_package, build_note_guid
 from .audio import AudioGenerationError, AudioGenerator, build_audio_generator
 from .cache import CardCache
 from .config import AppSettings
@@ -176,6 +176,7 @@ class DeckGenerationPipeline:
                 if card.plural_form
                 else None
             )
+            verb_form_audio = self._generate_verb_form_audio(source_item, card, audio_failed_items)
             example_audios = tuple(
                 self._generate_one_audio(
                     source_item=source_item,
@@ -189,14 +190,68 @@ class DeckGenerationPipeline:
             if (
                 word_audio is not None
                 or plural_audio is not None
+                or (
+                    verb_form_audio is not None
+                    and any(verb_audio is not None for verb_audio in verb_form_audio.paths())
+                )
                 or any(example_audio is not None for example_audio in example_audios)
             ):
                 audio_by_guid[build_note_guid(source_item)] = NoteAudio(
                     word_audio=word_audio,
                     plural_audio=plural_audio,
+                    verb_form_audio=verb_form_audio,
                     example_audios=example_audios,
                 )
         return audio_by_guid
+
+    def _generate_verb_form_audio(
+        self,
+        source_item: SourceItem,
+        card: GeneratedCard,
+        audio_failed_items: list[AudioFailedItem],
+    ) -> VerbFormAudio | None:
+        """Generate audio for editable verb-form fields."""
+        if card.verb_forms is None:
+            return None
+
+        verb_forms = card.verb_forms
+        return VerbFormAudio(
+            infinitive_audio=self._generate_one_audio(
+                source_item=source_item,
+                text=verb_forms.infinitive,
+                field_name="Verb_Infinitive_Audio",
+                label="verb-infinitive",
+                audio_failed_items=audio_failed_items,
+            ),
+            present_ik_audio=self._generate_one_audio(
+                source_item=source_item,
+                text=verb_forms.present_ik,
+                field_name="Verb_Present_Ik_Audio",
+                label="verb-present-ik",
+                audio_failed_items=audio_failed_items,
+            ),
+            present_hij_audio=self._generate_one_audio(
+                source_item=source_item,
+                text=verb_forms.present_hij,
+                field_name="Verb_Present_Hij_Audio",
+                label="verb-present-hij",
+                audio_failed_items=audio_failed_items,
+            ),
+            past_audio=self._generate_one_audio(
+                source_item=source_item,
+                text=verb_forms.past_tense,
+                field_name="Verb_Past_Audio",
+                label="verb-past",
+                audio_failed_items=audio_failed_items,
+            ),
+            perfect_audio=self._generate_one_audio(
+                source_item=source_item,
+                text=verb_forms.perfect_tense,
+                field_name="Verb_Perfect_Audio",
+                label="verb-perfect",
+                audio_failed_items=audio_failed_items,
+            ),
+        )
 
     def _generate_one_audio(
         self,
