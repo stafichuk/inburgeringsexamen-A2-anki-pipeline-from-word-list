@@ -13,7 +13,7 @@ def test_generated_card_accepts_valid_countable_noun_payload() -> None:
         "form_examples": [
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             },
@@ -33,6 +33,40 @@ def test_generated_card_accepts_valid_countable_noun_payload() -> None:
 
     card = GeneratedCard.model_validate(payload)
     assert card.plural_form == "scholen"
+
+
+def test_generated_card_accepts_countable_noun_forms_without_article() -> None:
+    payload = {
+        "dutch_word": "de tante",
+        "russian_translation": "тётя",
+        "part_of_speech": "noun",
+        "ipa_transcription": "ˈtɑn.tə",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "singular",
+                "form": "tante",
+                "example_sentence_nl": "Mijn tante woont in Amsterdam.",
+                "example_sentence_ru": "Моя тётя живёт в Амстердаме.",
+            },
+            {
+                "kind": "plural",
+                "form": "tantes",
+                "example_sentence_nl": "Mijn twee tantes komen op bezoek.",
+                "example_sentence_ru": "Мои две тёти придут в гости.",
+            },
+        ],
+        "tags": ["familie", "lesson-3"],
+        "plural_form": "tantes",
+        "front_hint": "тётя (множественное число?)",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert card.dutch_word == "de tante"
+    assert card.plural_form == "tantes"
 
 
 def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None:
@@ -93,6 +127,42 @@ def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
         raise AssertionError("validation should have failed")
 
 
+def test_generated_card_rejects_countable_noun_plural_form_with_article() -> None:
+    payload = {
+        "dutch_word": "de tante",
+        "russian_translation": "тётя",
+        "part_of_speech": "noun",
+        "ipa_transcription": "ˈtɑn.tə",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "singular",
+                "form": "tante",
+                "example_sentence_nl": "Mijn tante woont in Amsterdam.",
+                "example_sentence_ru": "Моя тётя живёт в Амстердаме.",
+            },
+            {
+                "kind": "plural",
+                "form": "tantes",
+                "example_sentence_nl": "Mijn twee tantes komen op bezoek.",
+                "example_sentence_ru": "Мои две тёти придут в гости.",
+            },
+        ],
+        "tags": ["familie", "lesson-3"],
+        "plural_form": "de tantes",
+        "front_hint": "тётя (множественное число?)",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    try:
+        GeneratedCard.model_validate(payload)
+    except ValidationError as exc:
+        assert "plural_form must not include article" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
 def test_generated_card_rejects_countable_noun_without_plural_example() -> None:
     payload = {
         "dutch_word": "de school",
@@ -103,7 +173,7 @@ def test_generated_card_rejects_countable_noun_without_plural_example() -> None:
         "form_examples": [
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             }
@@ -134,7 +204,7 @@ def test_generated_card_rejects_noun_without_article_in_word() -> None:
         "form_examples": [
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             },

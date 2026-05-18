@@ -76,27 +76,27 @@ def make_card(word: str) -> GeneratedCard:
 def make_noun_card(word: str) -> GeneratedCard:
     return GeneratedCard(
         dutch_word=f"de {word}",
-        russian_translation="школа",
+        russian_translation="тётя",
         part_of_speech="noun",
-        ipa_transcription="sxoːl",
-        lesson_topic="De school",
+        ipa_transcription="ˈtɑn.tə",
+        lesson_topic="De familie",
         form_examples=[
             {
                 "kind": "singular",
-                "form": f"de {word}",
-                "example_sentence_nl": f"De {word} is dichtbij.",
-                "example_sentence_ru": "Школа находится рядом.",
+                "form": word,
+                "example_sentence_nl": f"Mijn {word} woont in Amsterdam.",
+                "example_sentence_ru": "Моя тётя живёт в Амстердаме.",
             },
             {
                 "kind": "plural",
-                "form": "scholen",
-                "example_sentence_nl": "De scholen zijn dichtbij.",
-                "example_sentence_ru": "Школы находятся рядом.",
+                "form": f"{word}s",
+                "example_sentence_nl": f"Mijn twee {word}s komen op bezoek.",
+                "example_sentence_ru": "Мои две тёти придут в гости.",
             },
         ],
-        tags=["school", "noun"],
-        plural_form="scholen",
-        front_hint="школа (множественное число?)",
+        tags=["familie", "noun"],
+        plural_form=f"{word}s",
+        front_hint="тётя (множественное число?)",
     )
 
 
@@ -119,6 +119,7 @@ class TranslationHintNounClient(FakeClient):
     def generate_card(self, source_item: SourceItem) -> GeneratedCard:
         self.calls += 1
         translation = source_item.translation_hint or "родственник"
+        bare_form = source_item.text.removeprefix("de ").removeprefix("het ")
         return GeneratedCard(
             dutch_word=source_item.text,
             russian_translation=translation,
@@ -128,8 +129,8 @@ class TranslationHintNounClient(FakeClient):
             form_examples=[
                 {
                     "kind": "singular",
-                    "form": source_item.text,
-                    "example_sentence_nl": f"{source_item.text.capitalize()} komt vandaag.",
+                    "form": bare_form,
+                    "example_sentence_nl": f"Mijn {bare_form} komt vandaag.",
                     "example_sentence_ru": f"{translation.capitalize()} придет сегодня.",
                 },
                 {
@@ -387,7 +388,7 @@ def test_pipeline_generates_audio_for_successful_cards(tmp_path: Path, monkeypat
 
 def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeypatch) -> None:
     input_path = tmp_path / "words.txt"
-    input_path.write_text("school\n", encoding="utf-8")
+    input_path.write_text("tante\n", encoding="utf-8")
     output_path = tmp_path / "deck.apkg"
     settings = make_settings(tmp_path / ".cache", audio_enabled=True)
     captured_audio_by_guid = {}
@@ -407,11 +408,11 @@ def test_pipeline_generates_noun_word_audio_with_article(tmp_path: Path, monkeyp
     ).run(input_path=input_path, output_path=output_path)
 
     assert result.generated_items == 1
-    assert audio_generator.calls[0] == ("word", "de school")
+    assert audio_generator.calls[0] == ("word", "de tante")
     assert audio_generator.calls[1:] == [
-        ("plural", "scholen"),
-        ("example-singular", "De school is dichtbij."),
-        ("example-plural", "De scholen zijn dichtbij."),
+        ("plural", "tantes"),
+        ("example-singular", "Mijn tante woont in Amsterdam."),
+        ("example-plural", "Mijn twee tantes komen op bezoek."),
     ]
     audio = next(iter(captured_audio_by_guid.values()))
     assert audio.plural_audio is not None

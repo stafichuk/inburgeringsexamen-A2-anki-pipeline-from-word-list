@@ -61,6 +61,12 @@ def _word_tokens(value: str) -> list[str]:
     return re.findall(r"[\wÀ-ÿ'-]+", value.lower())
 
 
+def _starts_with_dutch_article(value: str) -> bool:
+    """Return whether a Dutch noun-like value starts with a definite article."""
+    normalized = value.lower()
+    return normalized.startswith("de ") or normalized.startswith("het ")
+
+
 class FormExample(StrictModel):
     """One example sentence for one visible word form."""
 
@@ -245,8 +251,7 @@ class GeneratedCard(StrictModel):
     def validate_pos_specific_fields(self) -> "GeneratedCard":
         """Require only the grammar fields relevant to the inferred POS."""
         if self.part_of_speech == PartOfSpeech.NOUN:
-            word = self.dutch_word.lower()
-            if not (word.startswith("de ") or word.startswith("het ")):
+            if not _starts_with_dutch_article(self.dutch_word):
                 raise ValueError("nouns must include article 'de' or 'het' in dutch_word")
             if not self.front_hint:
                 raise ValueError("nouns must include front_hint")
@@ -259,6 +264,8 @@ class GeneratedCard(StrictModel):
             if self.plural_form is None:
                 self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "uncountable nouns")
             else:
+                if _starts_with_dutch_article(self.plural_form):
+                    raise ValueError("countable noun plural_form must not include article")
                 self._require_exact_example_kinds(
                     {FormExampleKind.SINGULAR, FormExampleKind.PLURAL},
                     "countable nouns",

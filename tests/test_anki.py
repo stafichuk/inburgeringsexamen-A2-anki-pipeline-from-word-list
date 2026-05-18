@@ -71,7 +71,7 @@ def make_countable_noun_card() -> GeneratedCard:
         form_examples=[
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             },
@@ -199,7 +199,7 @@ def test_build_note_includes_article_in_word_field_for_nouns() -> None:
         form_examples=[
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             },
@@ -271,7 +271,7 @@ def test_build_note_includes_plural_sound_reference_for_countable_nouns(tmp_path
         form_examples=[
             {
                 "kind": "singular",
-                "form": "de school",
+                "form": "school",
                 "example_sentence_nl": "De school is dichtbij.",
                 "example_sentence_ru": "Школа находится рядом.",
             },

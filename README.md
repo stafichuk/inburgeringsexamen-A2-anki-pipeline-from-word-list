@@ -161,8 +161,8 @@ Core fields:
 - `tags`
 
 POS-specific fields:
-- countable nouns: article included directly in `dutch_word`, plus `plural_form`, `front_hint`, and `singular` / `plural` examples
-- uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example
+- countable nouns: article included directly in `dutch_word`, bare `plural_form`, `front_hint`, and `singular` / `plural` examples whose `form` value appears exactly in the sentence
+- uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example whose `form` value appears exactly in the sentence
 - verbs: `verb_forms`, with editable learner-visible forms for `infinitive`, `present_ik`, `present_hij`, `past_tense`, and `perfect_tense`, plus `present_tense`, `past_tense`, and `perfect_tense` examples
 - adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
 - adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
@@ -178,7 +178,7 @@ POS-specific fields:
   "form_examples": [
     {
       "kind": "singular",
-      "form": "de school",
+      "form": "school",
       "example_sentence_nl": "De school is dichtbij.",
       "example_sentence_ru": "Школа находится рядом."
     },
