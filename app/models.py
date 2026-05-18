@@ -83,16 +83,6 @@ class FormExample(StrictModel):
             raise ValueError("form example fields must not be empty")
         return value
 
-    @model_validator(mode="after")
-    def validate_form_appears_in_example(self) -> "FormExample":
-        """Require the selected form to be visible in the Dutch example."""
-        form_tokens = set(_word_tokens(self.form))
-        example_tokens = set(_word_tokens(self.example_sentence_nl))
-        if form_tokens and not form_tokens.issubset(example_tokens):
-            raise ValueError("form must appear in example_sentence_nl")
-        return self
-
-
 class VerbForms(StrictModel):
     """Verb forms needed for learner-oriented Dutch cards."""
 
@@ -251,6 +241,7 @@ class GeneratedCard(StrictModel):
     def validate_pos_specific_fields(self) -> "GeneratedCard":
         """Require only the grammar fields relevant to the inferred POS."""
         if self.part_of_speech == PartOfSpeech.NOUN:
+            self._require_visible_form_examples()
             if not _starts_with_dutch_article(self.dutch_word):
                 raise ValueError("nouns must include article 'de' or 'het' in dutch_word")
             if not self.front_hint:
@@ -290,6 +281,7 @@ class GeneratedCard(StrictModel):
             return self
 
         if self.part_of_speech == PartOfSpeech.ADJECTIVE:
+            self._require_visible_form_examples()
             if self.plural_form or self.front_hint:
                 raise ValueError("adjectives must not include noun-only fields")
             if self.verb_forms is not None:
@@ -312,8 +304,17 @@ class GeneratedCard(StrictModel):
             raise ValueError("non-verbs must not include verb_forms")
         if self.adjective_forms is not None:
             raise ValueError("non-adjectives must not include adjective_forms")
+        self._require_visible_form_examples()
         self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "single-form words")
         return self
+
+    def _require_visible_form_examples(self) -> None:
+        """Require selected forms to be visible for non-verb examples."""
+        for example in self.form_examples:
+            form_tokens = set(_word_tokens(example.form))
+            example_tokens = set(_word_tokens(example.example_sentence_nl))
+            if form_tokens and not form_tokens.issubset(example_tokens):
+                raise ValueError("form must appear in example_sentence_nl")
 
     def _require_exact_example_kinds(self, required_kinds: set[FormExampleKind], label: str) -> None:
         """Require a POS-specific exact set of example kinds."""

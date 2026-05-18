@@ -282,6 +282,101 @@ def test_generated_card_accepts_verb_with_three_form_examples() -> None:
     ]
 
 
+def test_generated_card_accepts_verb_with_preposition_without_literal_form_match() -> None:
+    payload = {
+        "dutch_word": "houden van",
+        "russian_translation": "любить",
+        "part_of_speech": "verb",
+        "ipa_transcription": "/ˈɦɑu̯.də(n) vɑn/",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "present_tense",
+                "form": "houden van",
+                "example_sentence_nl": "Ik hou van mijn familie.",
+                "example_sentence_ru": "Я люблю свою семью.",
+            },
+            {
+                "kind": "past_tense",
+                "form": "hielden van",
+                "example_sentence_nl": "Wij hielden van onze opa.",
+                "example_sentence_ru": "Мы любили нашего дедушку.",
+            },
+            {
+                "kind": "perfect_tense",
+                "form": "gehouden van",
+                "example_sentence_nl": "Zij heeft altijd van haar broer gehouden.",
+                "example_sentence_ru": "Она всегда любила своего брата.",
+            },
+        ],
+        "tags": ["familie", "werkwoord"],
+        "plural_form": None,
+        "front_hint": None,
+        "verb_forms": {
+            "infinitive": "houden van",
+            "present_ik": "ik hou van",
+            "present_hij": "hij houdt van",
+            "past_tense": "hield van",
+            "perfect_tense": "heeft gehouden van",
+            "separable_prefix": None,
+            "conjugation_notes": "Onregelmatig: ik hou / hij houdt.",
+        },
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert card.dutch_word == "houden van"
+
+
+def test_generated_card_accepts_separable_verb_without_literal_form_match() -> None:
+    payload = {
+        "dutch_word": "oppassen",
+        "russian_translation": "быть осторожным, присматривать",
+        "part_of_speech": "verb",
+        "ipa_transcription": "/ˈɔpɑsə(n)/",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "present_tense",
+                "form": "past op",
+                "example_sentence_nl": "Ik pas op mijn kleine zusje.",
+                "example_sentence_ru": "Я присматриваю за своей младшей сестрой.",
+            },
+            {
+                "kind": "past_tense",
+                "form": "paste op",
+                "example_sentence_nl": "Gisteren paste ik op de baby.",
+                "example_sentence_ru": "Вчера я присматривал за ребёнком.",
+            },
+            {
+                "kind": "perfect_tense",
+                "form": "heeft opgepast",
+                "example_sentence_nl": "Mijn broer heeft goed opgepast.",
+                "example_sentence_ru": "Мой брат хорошо присмотрел.",
+            },
+        ],
+        "tags": ["familie", "werkwoord", "scheidbaar"],
+        "plural_form": None,
+        "front_hint": None,
+        "verb_forms": {
+            "infinitive": "oppassen",
+            "present_ik": "ik pas op",
+            "present_hij": "hij past op",
+            "past_tense": "paste op",
+            "perfect_tense": "heeft opgepast",
+            "separable_prefix": "op",
+            "conjugation_notes": None,
+        },
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert card.verb_forms is not None
+    assert card.verb_forms.separable_prefix == "op"
+
+
 def test_generated_card_rejects_verb_without_perfect_tense_example() -> None:
     payload = {
         "dutch_word": "leren",
