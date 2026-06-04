@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-05-18.2"
+PROMPT_VERSION = "2026-06-04.1"
 
 
 def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
@@ -52,6 +52,7 @@ Rules:
 - Always fill all common required fields.
 - For non-verbs, every form_examples entry must use the exact visible Dutch form in the form field, and that form must appear in example_sentence_nl.
 - For nouns, dutch_word must include the article directly, e.g. "de tante" or "het huis".
+- If the input item is already a plural noun, normalize it to the singular lemma in dutch_word and keep the input plural as plural_form. For example, input "de ouders" must produce dutch_word "de ouder" and plural_form "ouders"; never produce dutch_word "de ouders".
 - For countable nouns, plural_form must be the bare plural form without article, e.g. "tantes", not "de tantes"; include front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'тётя (множественное число?)'. Include exactly two form_examples: singular and plural. Use the exact noun form visible in each example sentence, usually without article, e.g. singular form "tante" in "Mijn tante woont in Amsterdam." and plural form "tantes" in "Mijn twee tantes komen op bezoek."
 - For uncountable nouns, include front_hint, set plural_form to null, and do not add '(множественное число?)' to front_hint. Include exactly one default form_example.
 - For verbs, include verb_forms with infinitive, present_ik, present_hij, past_tense, perfect_tense, and optionally separable_prefix and conjugation_notes. Use learner-visible compact forms, e.g. infinitive "leren", present_ik "ik leer", present_hij "hij leert", past_tense "leerde", perfect_tense "heeft geleerd". Include exactly three form_examples: present_tense, past_tense, and perfect_tense. Verb examples must be natural A2 Dutch, and the form value may be a compact learner-visible label even when particles or prepositions move or split in the example sentence.

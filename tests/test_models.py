@@ -218,6 +218,43 @@ def test_generated_card_rejects_countable_noun_plural_form_with_article() -> Non
         raise AssertionError("validation should have failed")
 
 
+def test_generated_card_rejects_countable_noun_with_plural_headword() -> None:
+    payload = {
+        "dutch_word": "de ouders",
+        "russian_translation": "родители",
+        "part_of_speech": "noun",
+        "ipa_transcription": "ˈʌu̯.dərs",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "singular",
+                "form": "ouders",
+                "example_sentence_nl": "Mijn ouders wonen dichtbij.",
+                "example_sentence_ru": "Мои родители живут рядом.",
+            },
+            {
+                "kind": "plural",
+                "form": "ouders",
+                "example_sentence_nl": "Veel ouders wachten buiten.",
+                "example_sentence_ru": "Многие родители ждут снаружи.",
+            },
+        ],
+        "tags": ["familie", "lesson-3"],
+        "plural_form": "ouders",
+        "front_hint": "родитель (множественное число?)",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    try:
+        GeneratedCard.model_validate(payload)
+    except ValidationError as exc:
+        assert "singular" in str(exc)
+        assert "plural_form" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("validation should have failed")
+
+
 def test_generated_card_rejects_countable_noun_without_plural_example() -> None:
     payload = {
         "dutch_word": "de school",

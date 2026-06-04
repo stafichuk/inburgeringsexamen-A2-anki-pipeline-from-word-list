@@ -75,8 +75,18 @@ def _word_tokens(value: str) -> list[str]:
 
 def _starts_with_dutch_article(value: str) -> bool:
     """Return whether a Dutch noun-like value starts with a definite article."""
-    normalized = value.lower()
+    normalized = value.strip().casefold()
     return normalized.startswith("de ") or normalized.startswith("het ")
+
+
+def _strip_dutch_article(value: str) -> str:
+    """Return a Dutch noun-like value without a leading definite article."""
+    stripped = value.strip()
+    normalized = stripped.casefold()
+    for article in ("de ", "het "):
+        if normalized.startswith(article):
+            return stripped[len(article) :].strip()
+    return stripped
 
 
 class FormExample(StrictModel):
@@ -282,6 +292,11 @@ class GeneratedCard(StrictModel):
             else:
                 if _starts_with_dutch_article(self.plural_form):
                     raise ValueError("countable noun plural_form must not include article")
+                if _strip_dutch_article(self.dutch_word).casefold() == self.plural_form.casefold():
+                    raise ValueError(
+                        "countable noun dutch_word must be singular; "
+                        "plural_form must differ from article-stripped dutch_word"
+                    )
                 self._require_exact_example_kinds(
                     {FormExampleKind.SINGULAR, FormExampleKind.PLURAL},
                     "countable nouns",
