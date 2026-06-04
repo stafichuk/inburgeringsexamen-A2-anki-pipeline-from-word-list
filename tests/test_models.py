@@ -97,6 +97,61 @@ def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None
     assert card.front_hint == "молоко"
 
 
+def test_generated_card_accepts_uncountable_noun_singular_example_alias() -> None:
+    payload = {
+        "dutch_word": "de liefde",
+        "russian_translation": "любовь",
+        "part_of_speech": "noun",
+        "ipa_transcription": "/də ˈlif.də/",
+        "lesson_topic": "De familie",
+        "form_examples": [
+            {
+                "kind": "singular",
+                "form": "liefde",
+                "example_sentence_nl": "De liefde in onze familie is heel sterk.",
+                "example_sentence_ru": "Любовь в нашей семье очень сильная.",
+            }
+        ],
+        "tags": ["familie", "A2", "inburgering", "spreken"],
+        "plural_form": None,
+        "front_hint": "любовь",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert [example.kind.value for example in card.form_examples] == ["default"]
+
+
+def test_generated_card_enum_values_are_case_insensitive() -> None:
+    payload = {
+        "dutch_word": "DE MELK",
+        "russian_translation": "молоко",
+        "part_of_speech": "NOUN",
+        "ipa_transcription": "mɛlk",
+        "lesson_topic": "Eten en drinken",
+        "form_examples": [
+            {
+                "kind": "DEFAULT",
+                "form": "melk",
+                "example_sentence_nl": "Ik drink melk.",
+                "example_sentence_ru": "Я пью молоко.",
+            }
+        ],
+        "tags": ["food"],
+        "plural_form": None,
+        "front_hint": "молоко",
+        "verb_forms": None,
+        "adjective_forms": None,
+    }
+
+    card = GeneratedCard.model_validate(payload)
+
+    assert card.part_of_speech.value == "noun"
+    assert card.form_examples[0].kind.value == "default"
+
+
 def test_generated_card_rejects_uncountable_noun_with_plural_prompt() -> None:
     payload = {
         "dutch_word": "de melk",

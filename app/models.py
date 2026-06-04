@@ -43,6 +43,18 @@ class FormExampleKind(str, Enum):
     SINGLE_FORM = "single_form"
 
 
+def _normalize_enum_value(value: object, enum_type: type[Enum]) -> object:
+    """Accept enum values regardless of letter case."""
+    if isinstance(value, enum_type):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        for enum_value in enum_type:
+            if isinstance(enum_value.value, str) and enum_value.value.casefold() == normalized:
+                return enum_value
+    return value
+
+
 FORM_EXAMPLE_KIND_ORDER = {
     FormExampleKind.SINGULAR: 10,
     FormExampleKind.PLURAL: 20,
@@ -74,6 +86,12 @@ class FormExample(StrictModel):
     form: str
     example_sentence_nl: str
     example_sentence_ru: str
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def normalize_kind(cls, value: object) -> object:
+        """Accept form example kinds regardless of letter case."""
+        return _normalize_enum_value(value, FormExampleKind)
 
     @field_validator("form", "example_sentence_nl", "example_sentence_ru")
     @classmethod
@@ -193,6 +211,12 @@ class GeneratedCard(StrictModel):
     verb_forms: VerbForms | None = None
     adjective_forms: AdjectiveForms | None = None
 
+    @field_validator("part_of_speech", mode="before")
+    @classmethod
+    def normalize_part_of_speech(cls, value: object) -> object:
+        """Accept part-of-speech values regardless of letter case."""
+        return _normalize_enum_value(value, PartOfSpeech)
+
     @field_validator(
         "dutch_word",
         "russian_translation",
@@ -253,6 +277,7 @@ class GeneratedCard(StrictModel):
             if self.adjective_forms is not None:
                 raise ValueError("nouns must not include adjective_forms")
             if self.plural_form is None:
+                self._normalize_uncountable_form_example_kind()
                 self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "uncountable nouns")
             else:
                 if _starts_with_dutch_article(self.plural_form):
@@ -315,6 +340,14 @@ class GeneratedCard(StrictModel):
             example_tokens = set(_word_tokens(example.example_sentence_nl))
             if form_tokens and not form_tokens.issubset(example_tokens):
                 raise ValueError("form must appear in example_sentence_nl")
+
+    def _normalize_uncountable_form_example_kind(self) -> None:
+        """Treat one singular example as the default example for uncountable nouns."""
+        if len(self.form_examples) != 1:
+            return
+        example = self.form_examples[0]
+        if example.kind == FormExampleKind.SINGULAR:
+            self.form_examples = [example.model_copy(update={"kind": FormExampleKind.DEFAULT})]
 
     def _require_exact_example_kinds(self, required_kinds: set[FormExampleKind], label: str) -> None:
         """Require a POS-specific exact set of example kinds."""

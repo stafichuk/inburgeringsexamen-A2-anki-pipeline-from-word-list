@@ -95,9 +95,9 @@ Generate a deck with config defaults:
 
 ```bash
 generate-deck \
-  --input words.example.txt \
-  --output school.apkg \
-  --config config.example.yaml
+  --input words.txt \
+  --output familie.apkg \
+  --config config.yaml
 ```
 
 Override topic and lesson at runtime:
