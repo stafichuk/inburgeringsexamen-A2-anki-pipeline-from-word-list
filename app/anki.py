@@ -185,7 +185,6 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Infinitive}}<div class="grammar">
   <div class="label">Werkwoordsvormen:</div>
-  <div class="verb-form"><span class="verb-label">Infinitive:</span> {{Verb_Infinitive}}{{Verb_Infinitive_Audio}}</div>
   <div class="verb-form"><span class="verb-label">Tegenwoordige tijd:</span> {{Verb_Present_Ik}}{{Verb_Present_Ik_Audio}}</div>
   <div class="verb-form">{{Verb_Present_Hij}}{{Verb_Present_Hij_Audio}}</div>
   <div class="verb-form"><span class="verb-label">Verleden tijd:</span> {{Verb_Past}}{{Verb_Past_Audio}}</div>

@@ -151,7 +151,8 @@ def test_note_model_template_matches_updated_layout() -> None:
     assert "{{Example_3_NL}}{{Example_3_Audio}}" in template
     assert "Werkwoordsvormen:" in template
     assert "{{Verb_Forms}}" not in template
-    assert "{{Verb_Infinitive}}{{Verb_Infinitive_Audio}}" in template
+    assert "Infinitive:" not in template
+    assert "{{Verb_Infinitive}}{{Verb_Infinitive_Audio}}" not in template
     assert "{{Verb_Present_Ik}}{{Verb_Present_Ik_Audio}}" in template
     assert "{{Verb_Present_Hij}}{{Verb_Present_Hij_Audio}}" in template
     assert "{{Verb_Past}}{{Verb_Past_Audio}}" in template

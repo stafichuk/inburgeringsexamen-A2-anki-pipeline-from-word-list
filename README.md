@@ -163,7 +163,7 @@ Core fields:
 POS-specific fields:
 - countable nouns: article included directly in `dutch_word`, bare `plural_form`, `front_hint`, and `singular` / `plural` examples whose `form` value appears exactly in the sentence
 - uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example whose `form` value appears exactly in the sentence
-- verbs: `verb_forms`, with editable learner-visible forms for `infinitive`, `present_ik`, `present_hij`, `past_tense`, and `perfect_tense`, plus `present_tense`, `past_tense`, and `perfect_tense` examples
+- verbs: `verb_forms`, with editable forms for `infinitive`, `present_ik`, `present_hij`, `past_tense`, and `perfect_tense`, plus `present_tense`, `past_tense`, and `perfect_tense` examples
 - adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
 - adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
 
@@ -242,7 +242,7 @@ Card behavior:
 - Uncountable noun cards keep the front hint plain and do not add `(множественное число?)`.
 - Regular adjective cards do not list predictable endings as grammar fields, but examples must show both visible forms, e.g. `mooi` and `mooie`.
 - Onverbuigbare adjectives use one clear `single_form` example in a context where regular adjectives would normally take `-e`, e.g. `de gouden ring`.
-- Verb cards store each learner-visible form in its own field, e.g. `leren`, `ik leer`, `hij leert`, `leerde`, and `heeft geleerd`, with paired audio fields so HyperTTS can regenerate individual form audio after manual corrections.
+- Verb cards store each form in its own field, e.g. `leren`, `ik leer`, `hij leert`, `leerde`, and `heeft geleerd`, with paired audio fields so HyperTTS can regenerate individual form audio after manual corrections. The back-side grammar block shows the conjugated forms; the infinitive is already shown as the Dutch headword at the top.
 - Back side shows Dutch, IPA, grammar details, then the generated examples. Each example shows the form label, Russian sentence, Dutch sentence, and its matching audio reference when available.
 - `Word_Audio`, `Plural_Audio`, verb-form audio fields, and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
 
