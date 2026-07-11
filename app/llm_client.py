@@ -80,13 +80,22 @@ class LLMClient:
         """Generate one validated card, retrying on transport and format errors."""
         attempts = self.settings.max_retries + 1
         last_error: Exception | None = None
+`       previous_response: str | None = None
+        validation_error: str | None = None
 
         for attempt in range(1, attempts + 1):
             try:
-                response_text = self._request_completion(source_item)
+                response_text = self._request_completion(
+                    source_item,
+                    previous_response=previous_response,
+                    validation_error=validation_error,
+                )
                 return parse_generated_card(response_text, allow_json_repair=self.json_repair_enabled)
             except (LLMClientError, error.URLError, TimeoutError) as exc:
                 last_error = exc
+                if isinstance(exc, LLMResponseFormatError):
+                    previous_response = exc.raw_text
+                    validation_error = str(exc.args[0]) if exc.args else str(exc)
                 if attempt >= attempts:
                     break
                 sleep_seconds = self.settings.retry_backoff_seconds * attempt
@@ -105,11 +114,21 @@ class LLMClient:
             raise LLMClientError(f"{message}: {last_error}") from last_error
         raise LLMClientError(message)
 
-    def _request_completion(self, source_item: SourceItem) -> str:
+    def _request_completion(
+        self,
+        source_item: SourceItem,
+        *,
+        previous_response: str | None = None,
+        validation_error: str | None = None,
+    ) -> str:
         """Send a chat-completions request and return the raw content string."""
         payload = {
             "model": self.settings.model_name,
-            "messages": build_messages(source_item),
+            "messages": build_messages(
+                source_item,
+                previous_response=previous_response,
+                validation_error=validation_error,
+            ),
             "temperature": self.settings.temperature,
             "max_tokens": self.settings.max_tokens,
         }

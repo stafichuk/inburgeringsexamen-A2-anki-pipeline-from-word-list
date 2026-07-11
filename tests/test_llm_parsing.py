@@ -54,6 +54,52 @@ VALID_JSON = """
 }
 """.strip()
 
+INVALID_MONTH_JSON = """
+{
+  "dutch_word": "januari",
+  "russian_translation": "январь",
+  "part_of_speech": "noun",
+  "ipa_transcription": "/jɑnyˈwaːri/",
+  "lesson_topic": "Het formulier en de agenda",
+  "form_examples": [
+    {
+      "kind": "default",
+      "form": "januari",
+      "example_sentence_nl": "Januari is de eerste maand van het jaar.",
+      "example_sentence_ru": "Январь — первый месяц года."
+    }
+  ],
+  "tags": ["maand", "kalender", "agenda", "A2"],
+  "plural_form": null,
+  "front_hint": "месяц (январь)",
+  "verb_forms": null,
+  "adjective_forms": null
+}
+""".strip()
+
+VALID_MONTH_JSON = """
+{
+  "dutch_word": "de januari",
+  "russian_translation": "январь",
+  "part_of_speech": "noun",
+  "ipa_transcription": "/jɑnyˈwaːri/",
+  "lesson_topic": "Het formulier en de agenda",
+  "form_examples": [
+    {
+      "kind": "default",
+      "form": "januari",
+      "example_sentence_nl": "Januari is de eerste maand van het jaar.",
+      "example_sentence_ru": "Январь — первый месяц года."
+    }
+  ],
+  "tags": ["maand", "kalender", "agenda", "A2"],
+  "plural_form": null,
+  "front_hint": "месяц (январь)",
+  "verb_forms": null,
+  "adjective_forms": null
+}
+""".strip()
+
 
 def test_extract_json_object_handles_fenced_response() -> None:
     raw_text = f"```json\n{VALID_JSON}\n```"
@@ -83,7 +129,13 @@ def test_generate_card_logs_raw_model_response_on_retry(caplog: pytest.LogCaptur
     broken_json = '{"dutch_word": "de opa"}'
 
     class BrokenResponseClient(LLMClient):
-        def _request_completion(self, source_item: SourceItem) -> str:
+        def _request_completion(
+            self,
+            source_item: SourceItem,
+            *,
+            previous_response: str | None = None,
+            validation_error: str | None = None,
+        ) -> str:
             return broken_json
 
     settings = LLMSettings(
@@ -102,3 +154,40 @@ def test_generate_card_logs_raw_model_response_on_retry(caplog: pytest.LogCaptur
     assert "LLM generation failed for 'de opa' on attempt 1/2" in caplog.text
     assert "LLM response:" in caplog.text
     assert broken_json in caplog.text
+
+
+def test_generate_card_retries_with_validation_feedback() -> None:
+    class RepairingResponseClient(LLMClient):
+        def __init__(self, settings: LLMSettings) -> None:
+            super().__init__(settings)
+            self.calls: list[tuple[str | None, str | None]] = []
+
+        def _request_completion(
+            self,
+            source_item: SourceItem,
+            *,
+            previous_response: str | None = None,
+            validation_error: str | None = None,
+        ) -> str:
+            self.calls.append((previous_response, validation_error))
+            if len(self.calls) == 1:
+                return INVALID_MONTH_JSON
+            return VALID_MONTH_JSON
+
+    settings = LLMSettings(
+        base_url="https://example.invalid/v1/chat/completions",
+        api_token="token",
+        model_name="test-model",
+        max_retries=1,
+        retry_backoff_seconds=0,
+    )
+    client = RepairingResponseClient(settings)
+
+    card = client.generate_card(SourceItem(text="januari"))
+
+    assert card.dutch_word == "de januari"
+    assert client.calls[0] == (None, None)
+    assert client.calls[1][0] == INVALID_MONTH_JSON
+    assert client.calls[1][1] is not None
+    assert "nouns must include article" in client.calls[1][1]
+    assert "LLM response:" not in client.calls[1][1]

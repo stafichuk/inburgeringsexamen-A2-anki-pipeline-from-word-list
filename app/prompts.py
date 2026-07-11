@@ -6,10 +6,15 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-06-04.1"
+PROMPT_VERSION = "2026-06-05.1"
 
 
-def build_messages(source_item: SourceItem) -> list[dict[str, str]]:
+def build_messages(
+    source_item: SourceItem,
+    *,
+    previous_response: str | None = None,
+    validation_error: str | None = None,
+) -> list[dict[str, str]]:
     """Build chat-completion messages for a single vocabulary item."""
     topic = source_item.topic or "Neutral everyday learning context"
     lesson = source_item.lesson or "No lesson title provided"
@@ -52,6 +57,7 @@ Rules:
 - Always fill all common required fields.
 - For non-verbs, every form_examples entry must use the exact visible Dutch form in the form field, and that form must appear in example_sentence_nl.
 - For nouns, dutch_word must include the article directly, e.g. "de tante" or "het huis".
+- Month names are Dutch de-nouns. For month-name cards, set dutch_word to "de januari", "de februari", "de maart", "de april", "de mei", "de juni", "de juli", "de augustus", "de september", "de oktober", "de november", or "de december". Use the bare month name in form_examples because normal month sentences often say "in januari" or "Januari is ...". Set plural_form to null and include one default form_example unless the input explicitly asks for a plural month form.
 - If the input item is already a plural noun, normalize it to the singular lemma in dutch_word and keep the input plural as plural_form. For example, input "de ouders" must produce dutch_word "de ouder" and plural_form "ouders"; never produce dutch_word "de ouders".
 - For countable nouns, plural_form must be the bare plural form without article, e.g. "tantes", not "de tantes"; include front_hint. The front_hint must be in Russian and explicitly prompt plural recall, e.g. 'тётя (множественное число?)'. Include exactly two form_examples: singular and plural. Use the exact noun form visible in each example sentence, usually without article, e.g. singular form "tante" in "Mijn tante woont in Amsterdam." and plural form "tantes" in "Mijn twee tantes komen op bezoek."
 - For uncountable nouns, include front_hint, set plural_form to null, and do not add '(множественное число?)' to front_hint. Include exactly one default form_example.
@@ -68,7 +74,23 @@ JSON schema:
 {schema}
 """.strip()
 
-    return [
+    messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+
+    if previous_response is not None or validation_error is not None:
+        repair_prompt = f"""
+The previous response failed validation. Return a corrected JSON object only.
+
+Validation error:
+{validation_error or "Not provided"}
+
+Previous response:
+{previous_response or "<empty response>"}
+
+Keep the same input item and context. Fix the schema violation instead of changing the requested vocabulary sense.
+""".strip()
+        messages.append({"role": "user", "content": repair_prompt})
+
+    return messages
