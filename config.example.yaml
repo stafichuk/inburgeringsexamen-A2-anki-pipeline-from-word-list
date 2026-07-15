@@ -8,7 +8,8 @@ llm:
   max_retries: 2
   retry_backoff_seconds: 1.5
   temperature: 0.2
-  max_tokens: 800
+  # Size this for all currently pending cards in one coordinated response.
+  max_tokens: 65536
 
 deck:
   deck_name: "Lesson 3 - De school"
@@ -20,7 +21,6 @@ generation:
   default_lesson: "Lesson 3"
   default_exam_level: "A2 Inburgering Spreken"
   json_repair_enabled: true
-  parallelism: 4
 
 cache:
   directory: ".cache/cards"

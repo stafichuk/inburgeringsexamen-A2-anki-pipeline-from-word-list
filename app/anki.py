@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import html
+import os
 from pathlib import Path
+import tempfile
 
 import genanki
 
@@ -160,10 +162,22 @@ class NoteAudio:
 
 def build_note_guid(source_item: SourceItem) -> str:
     """Build the stable note GUID for a source item."""
-    guid_seed = (
-        f"{source_item.text}|{source_item.translation_hint or ''}|"
-        f"{source_item.topic or ''}|{source_item.lesson or ''}"
-    )
+    if source_item.entry_id is not None:
+        normalized_id = " ".join(source_item.entry_id.casefold().split())
+        guid_seed = (
+            f"id:{normalized_id}|{source_item.topic or ''}|{source_item.lesson or ''}"
+        )
+    else:
+        normalized_text = " ".join(source_item.text.casefold().split())
+        normalized_hint = (
+            " ".join(source_item.translation_hint.casefold().split())
+            if source_item.translation_hint is not None
+            else ""
+        )
+        guid_seed = (
+            f"{normalized_text}|{normalized_hint}|"
+            f"{source_item.topic or ''}|{source_item.lesson or ''}"
+        )
     return hashlib.md5(guid_seed.encode("utf-8")).hexdigest()
 
 
@@ -414,5 +428,16 @@ def build_deck_package(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     package = genanki.Package(deck)
     package.media_files = media_files
-    package.write_to_file(str(output_path))
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        dir=output_path.parent,
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.close(file_descriptor)
+        package.write_to_file(str(temporary_path))
+        os.replace(temporary_path, output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     return output_path

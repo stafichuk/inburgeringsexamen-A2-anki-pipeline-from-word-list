@@ -183,11 +183,20 @@ class AdjectiveForms(StrictModel):
 class SourceItem(StrictModel):
     """Input item plus run-time metadata."""
 
+    entry_id: str | None = None
     text: str
     translation_hint: str | None = None
     topic: str | None = None
     lesson: str | None = None
     exam_level: str | None = None
+
+    @field_validator("entry_id")
+    @classmethod
+    def normalize_entry_id(cls, value: str | None) -> str | None:
+        """Reject blank explicit IDs used for stable cache and Anki identity."""
+        if value is not None and not value.strip():
+            raise ValueError("entry_id must be null or non-empty")
+        return value
 
     @field_validator("text")
     @classmethod
@@ -204,6 +213,17 @@ class SourceItem(StrictModel):
         if value is not None and not value.strip():
             raise ValueError("translation_hint must be null or non-empty")
         return value
+
+    def identity_key(self) -> str:
+        """Return the stable logical identity used for duplicate detection."""
+        if self.entry_id is not None:
+            return f"explicit:{' '.join(self.entry_id.casefold().split())}"
+
+        word = " ".join(self.text.casefold().split())
+        if self.translation_hint is None:
+            return f"implicit:{word}"
+        hint = " ".join(self.translation_hint.casefold().split())
+        return f"implicit:{word}|hint:{hint}"
 
 
 class GeneratedCard(StrictModel):

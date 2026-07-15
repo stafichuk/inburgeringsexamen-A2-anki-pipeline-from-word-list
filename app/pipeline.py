@@ -2,29 +2,36 @@
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Callable
 from typing import Protocol
 
 from .anki import NoteAudio, VerbFormAudio, build_deck_package, build_note_guid
 from .audio import AudioGenerationError, AudioGenerator, build_audio_generator
 from .cache import CardCache
 from .config import AppSettings
-from .llm_client import LLMClient, LLMClientError
+from .llm_client import BatchGenerationResult, LLMClient, LLMClientError
 from .models import GeneratedCard, SourceItem
 from .prompts import PROMPT_VERSION
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_TRANSLATION_DELIMITER = " - "
+EXPLICIT_ID_PATTERN = re.compile(r"^\[([^\[\]]+)\]\s+(.+)$")
 
 
 class CardGenerator(Protocol):
     """Protocol for card generation backends."""
 
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
-        """Generate a validated card for one source item."""
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
+        """Generate a coordinated batch while preserving partial successes."""
 
 
 @dataclass(slots=True)
@@ -52,6 +59,7 @@ class PipelineResult:
     total_items: int
     generated_items: int
     cached_items: int
+    deck_written: bool = True
     failed_items: list[FailedItem] = field(default_factory=list)
     audio_failed_items: list[AudioFailedItem] = field(default_factory=list)
 
@@ -98,14 +106,16 @@ class DeckGenerationPipeline:
         cached_items = 0
         pending_items: list[tuple[int, SourceItem]] = []
 
+        if force:
+            self.cache.begin_refresh(source_items)
+
         for index, source_item in enumerate(source_items, start=1):
             LOGGER.info("Preparing %s/%s: %s", index, len(source_items), source_item.text)
             try:
-                card = None if force else self.cache.get(
-                    source_item,
-                    model_name=self.settings.llm.model_name,
-                    prompt_version=PROMPT_VERSION,
-                )
+                if force:
+                    card = None
+                else:
+                    card = self.cache.get(source_item)
                 if card is not None:
                     cached_items += 1
                     LOGGER.info("Cache hit for '%s'.", source_item.text)
@@ -124,7 +134,22 @@ class DeckGenerationPipeline:
         )
 
         cards = [cards_by_index[index] for index in sorted(cards_by_index)]
-        if not cards:
+        if failed_items:
+            LOGGER.error(
+                "Deck was not written because %s/%s card(s) remain unresolved.",
+                len(failed_items),
+                len(source_items),
+            )
+            return PipelineResult(
+                output_path=output_path,
+                total_items=len(source_items),
+                generated_items=len(cards),
+                cached_items=cached_items,
+                deck_written=False,
+                failed_items=failed_items,
+            )
+
+        if not cards:  # pragma: no cover - guarded by non-empty input and failures above
             raise RuntimeError("no valid cards were generated; deck will not be written")
 
         audio_failed_items: list[AudioFailedItem] = []
@@ -287,71 +312,57 @@ class DeckGenerationPipeline:
         cards_by_index: dict[int, tuple[SourceItem, GeneratedCard]],
         failed_items: list[FailedItem],
     ) -> None:
-        """Generate uncached items, optionally in parallel, while preserving input order."""
+        """Generate all cache misses as one coordinated, resumable batch."""
         if not pending_items:
             return
 
-        worker_count = min(self.settings.generation.parallelism, len(pending_items))
         LOGGER.info(
-            "Generating %s uncached items with up to %s parallel worker(s).",
+            "Generating one coordinated batch for %s uncached item(s).",
             len(pending_items),
-            worker_count,
         )
+        pending_by_index = dict(pending_items)
+        existing_cards = [cards_by_index[index] for index in sorted(cards_by_index)]
 
-        if worker_count == 1:
-            for index, source_item in pending_items:
-                self._process_pending_item(
-                    index=index,
-                    source_item=source_item,
-                    total_items=total_items,
-                    cards_by_index=cards_by_index,
-                    failed_items=failed_items,
-                )
-            return
-
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures: dict[Future[GeneratedCard], tuple[int, SourceItem]] = {
-                executor.submit(self._generate_and_cache_card, source_item): (index, source_item)
-                for index, source_item in pending_items
-            }
-            for future in as_completed(futures):
-                index, source_item = futures[future]
-                try:
-                    card = future.result()
-                    cards_by_index[index] = (source_item, card)
-                    LOGGER.info("Completed %s/%s: %s", index, total_items, source_item.text)
-                except (LLMClientError, ValueError) as exc:
-                    LOGGER.error("Failed to process '%s': %s", source_item.text, exc)
-                    failed_items.append(FailedItem(source_word=source_item.text, reason=str(exc)))
-
-    def _process_pending_item(
-        self,
-        *,
-        index: int,
-        source_item: SourceItem,
-        total_items: int,
-        cards_by_index: dict[int, tuple[SourceItem, GeneratedCard]],
-        failed_items: list[FailedItem],
-    ) -> None:
-        """Generate and cache one uncached item in sequential mode."""
-        try:
-            card = self._generate_and_cache_card(source_item)
+        def accept_card(index: int, card: GeneratedCard) -> None:
+            source_item = pending_by_index.get(index)
+            if source_item is None:
+                LOGGER.warning("Ignoring generated card for unknown source ID %s.", index)
+                return
+            self.cache.set(
+                source_item,
+                card,
+                model_name=self.settings.llm.model_name,
+                prompt_version=PROMPT_VERSION,
+            )
             cards_by_index[index] = (source_item, card)
             LOGGER.info("Completed %s/%s: %s", index, total_items, source_item.text)
-        except (LLMClientError, ValueError) as exc:
-            LOGGER.error("Failed to process '%s': %s", source_item.text, exc)
-            failed_items.append(FailedItem(source_word=source_item.text, reason=str(exc)))
 
-    def _generate_and_cache_card(self, source_item: SourceItem) -> GeneratedCard:
-        """Generate one card and persist it in the cache."""
-        card = self.llm_client.generate_card(source_item)
-        self.cache.set(
-            source_item,
-            card,
-            model_name=self.settings.llm.model_name,
-            prompt_version=PROMPT_VERSION,
-        )
-        return card
+        try:
+            result = self.llm_client.generate_cards(
+                pending_items,
+                existing_cards,
+                on_card_accepted=accept_card,
+            )
+        except (LLMClientError, ValueError) as exc:
+            LOGGER.error("Batch generation failed: %s", exc)
+            result = BatchGenerationResult(
+                failures={
+                    index: str(exc)
+                    for index in pending_by_index
+                    if index not in cards_by_index
+                },
+            )
+
+        for index, card in result.cards.items():
+            if index not in cards_by_index:
+                accept_card(index, card)
+
+        for index, source_item in pending_items:
+            if index in cards_by_index:
+                continue
+            reason = result.failures.get(index, "card remained unresolved after all attempts")
+            LOGGER.error("Failed to process '%s': %s", source_item.text, reason)
+            failed_items.append(FailedItem(source_word=source_item.text, reason=reason))
 
 
 def load_source_items(
@@ -366,19 +377,26 @@ def load_source_items(
         raise FileNotFoundError(f"input file not found: {input_path}")
 
     source_items: list[SourceItem] = []
+    identity_lines: dict[str, int] = {}
     for line_number, raw_line in enumerate(input_path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        source_items.append(
-            parse_source_item_line(
-                line,
-                line_number=line_number,
-                topic=topic,
-                lesson=lesson,
-                exam_level=exam_level,
-            )
+        source_item = parse_source_item_line(
+            line,
+            line_number=line_number,
+            topic=topic,
+            lesson=lesson,
+            exam_level=exam_level,
         )
+        identity = source_item.identity_key()
+        if identity in identity_lines:
+            raise ValueError(
+                f"duplicate source identity on lines {identity_lines[identity]} and {line_number}; "
+                "add distinct [id] prefixes"
+            )
+        identity_lines[identity] = line_number
+        source_items.append(source_item)
 
     if not source_items:
         raise ValueError("input file does not contain any vocabulary items")
@@ -394,16 +412,37 @@ def parse_source_item_line(
     exam_level: str | None,
 ) -> SourceItem:
     """Parse one non-empty input line into a source item."""
-    if line == "-" or line.startswith("- ") or line.endswith(" -"):
+    entry_id: str | None = None
+    vocabulary_line = line
+    if line.startswith("["):
+        match = EXPLICIT_ID_PATTERN.fullmatch(line)
+        if match is None:
+            raise ValueError(
+                f"invalid explicit ID on line {line_number}; expected '[id] <Dutch item>'"
+            )
+        entry_id = match.group(1).strip()
+        vocabulary_line = match.group(2).strip()
+
+    if (
+        vocabulary_line == "-"
+        or vocabulary_line.startswith("- ")
+        or vocabulary_line.endswith(" -")
+    ):
         raise ValueError(
             f"invalid hinted vocabulary item on line {line_number}; "
             "expected '<Dutch item> - <Russian translation hint>'"
         )
 
-    if SOURCE_TRANSLATION_DELIMITER not in line:
-        return SourceItem(text=line, topic=topic, lesson=lesson, exam_level=exam_level)
+    if SOURCE_TRANSLATION_DELIMITER not in vocabulary_line:
+        return SourceItem(
+            entry_id=entry_id,
+            text=vocabulary_line,
+            topic=topic,
+            lesson=lesson,
+            exam_level=exam_level,
+        )
 
-    text, translation_hint = line.split(SOURCE_TRANSLATION_DELIMITER, 1)
+    text, translation_hint = vocabulary_line.split(SOURCE_TRANSLATION_DELIMITER, 1)
     text = text.strip()
     translation_hint = translation_hint.strip()
     if not text or not translation_hint:
@@ -412,6 +451,7 @@ def parse_source_item_line(
             "expected '<Dutch item> - <Russian translation hint>'"
         )
     return SourceItem(
+        entry_id=entry_id,
         text=text,
         translation_hint=translation_hint,
         topic=topic,

@@ -3,13 +3,14 @@
 CLI application for generating `.apkg` Anki decks from plain Dutch word lists. The tool is designed for Russian-speaking learners preparing for the A2 Inburgering Spreken exam and can optionally generate Dutch audio with Azure Text to Speech.
 
 ## Features
-- Reads a plain text file with one Dutch word or phrase per line.
+- Reads a plain text file with one Dutch word or phrase per line and optional stable entry IDs.
 - Calls an external OpenAI-compatible LLM endpoint to infer part of speech and generate structured card data.
 - Supports optional per-line Russian translation hints for sense-specific cards.
 - Validates every model response against strict Pydantic schemas.
-- Retries malformed responses and fails per-item rather than losing the whole run.
-- Caches generated items locally by word, translation hint, topic, lesson, model, and prompt version.
-- Generates uncached items in parallel with a bounded worker pool.
+- Generates all pending cache misses together so the model can coordinate varied examples across the deck.
+- Uses accepted cards as immutable diversity context when generating newly added or previously failed items.
+- Caches every valid card before retrying only missing or invalid cards.
+- Publishes the `.apkg` only when every current input entry has a valid card.
 - Generates a real `.apkg` deck with a custom note type using `genanki`.
 - Optionally generates and packages Dutch word and example-sentence audio.
 
@@ -60,7 +61,7 @@ llm:
   max_retries: 2
   retry_backoff_seconds: 1.5
   temperature: 0.2
-  max_tokens: 800
+  max_tokens: 65536
 
 deck:
   deck_name: "Lesson 3 - De school"
@@ -69,7 +70,6 @@ generation:
   default_topic: "De school"
   default_lesson: "Lesson 3"
   default_exam_level: "A2 Inburgering Spreken"
-  parallelism: 4
 
 cache:
   directory: ".cache/cards"
@@ -96,7 +96,7 @@ Generate a deck with config defaults:
 ```bash
 generate-deck \
   --input words.txt \
-  --output familie.apkg \
+  --output formulier.apkg \
   --config config.yaml
 ```
 
@@ -107,12 +107,11 @@ generate-deck \
   --input words.example.txt \
   --output school.apkg \
   --config config.example.yaml \
-  --parallelism 6 \
   --topic "De school" \
   --lesson "Lesson 3"
 ```
 
-Force regeneration and bypass cache:
+Start or resume a coordinated full refresh:
 
 ```bash
 generate-deck \
@@ -136,20 +135,23 @@ generate-deck \
 ```
 
 ## Input Word List
-Each non-comment line is either a plain Dutch item or a Dutch item with a strict Russian translation hint:
+Each non-comment line is a Dutch item with an optional stable ID and optional strict Russian translation hint:
 
 ```text
 de broer
-de neef - племянник
-de neef - двоюродный брат
+[neef-nephew] de neef - племянник
+[neef-cousin] de neef - двоюродный брат
+[friend] de vrient
 kinderopvang - детский сад
 e-mail
 ```
 
-The delimiter is the spaced form ` - `. Hyphenated Dutch words such as `e-mail` are treated as plain items. A hinted line becomes its own card, so the two `de neef` lines above have separate cache entries, note IDs, examples, audio, and Anki scheduling.
+The optional `[id]` prefix is the stable identity of the entry. When it is omitted, identity is derived from the normalized Dutch item plus its translation hint, if present. Ordinary words and same-spelling words with different hints therefore stay as easy to author as before. Use an explicit ID when you want to correct the Dutch spelling or hint later without changing the Anki note identity, or when two lines would otherwise have the same implicit identity. For example, `[friend] de vrient` can later become `[friend] de vriend` while keeping the same note identity and Anki scheduling. IDs must be unique within the input.
+
+The translation delimiter is the spaced form ` - `. Hyphenated Dutch words such as `e-mail` are treated as plain items. A hinted line becomes its own card. Different hints already give the two `de neef` lines separate implicit identities; their explicit IDs additionally keep those identities stable if a word or hint is corrected later.
 
 ## LLM Output Schema
-The model is prompted to return JSON only. Responses are validated against strict Pydantic models with POS-specific requirements.
+The model is prompted to return JSON only. Each batch row must echo its `source_id`, exact `input_item`, and exact `translation_hint` (including `null`), which prevents a valid card or same-word sense from being accepted under a swapped source row. Nested card responses are validated against strict Pydantic models with POS-specific requirements.
 
 Core fields:
 - `dutch_word`
@@ -247,38 +249,31 @@ Card behavior:
 - `Word_Audio`, `Plural_Audio`, verb-form audio fields, and per-example audio fields are populated with packaged `[sound:...]` references when audio generation is enabled.
 
 ## Caching
-Each successful generation is cached locally in `.cache/cards/` by:
-- normalized source word
-- translation hint, when provided
-- topic
-- lesson
-- exam level
-- model name
-- prompt version
+Each accepted card is cached locally in `.cache/cards/`. Its reusable identity includes:
 
-Use `--force` to bypass cache reads and overwrite cached entries.
+- the entry ID;
+- the current source word and translation hint;
+- topic;
+- lesson;
+- exam level.
 
-## Parallelism
-Uncached words are generated concurrently. By default, the pipeline uses up to `4` parallel requests.
+Changing the source word or translation hint, topic, lesson, or exam level invalidates the affected accepted card. Changing the LLM model or prompt version does not invalidate accepted cards: model and prompt information is generation metadata, while previously accepted content remains frozen.
 
-Tune this with config:
+An explicit entry ID separates Anki note identity from source content. Correcting the source of `[friend] de vrient` to `[friend] de vriend` regenerates its cached content because the source changed, but retains the stable ID used for the Anki note.
 
-```yaml
-generation:
-  parallelism: 6
-```
+## Incremental Batch Generation
 
-Or override it on the CLI:
+On the first run, all input entries are cache misses and are generated in one coordinated batch. On later runs, only new, changed, missing, or previously invalid entries are requested together. The Dutch examples from all accepted cached cards are included as immutable context so the model can avoid repeating their situations and sentence patterns; cached cards are not returned or rewritten by a normal run.
 
-```bash
-generate-deck --input words.txt --output school.apkg --config config.yaml --parallelism 6
-```
+If a batch contains a mixture of valid and invalid or missing cards, every valid card is cached as soon as it is accepted. Automatic retries request only the unresolved entries and include the newly accepted cards in their diversity context. A later command continues in the same way if the retry limit is reached or the earlier command is interrupted.
 
-For this workload, bounded parallelism is a better fit than batching:
-- cache entries remain one word per file
-- one bad response only affects one word
-- retries stay per item
-- deck output still preserves the original input order
+The pipeline does not publish a card-incomplete deck. The requested output file, including any previously complete `.apkg` at that path, remains untouched until all current input entries have valid cards. Partial cache progress is retained even when no deck can yet be written.
+
+`--force` starts a resumable full refresh of every current input entry. A durable refresh marker suppresses all previous entries before generation begins, so an interruption cannot mix refreshed cards with old fallbacks. Refreshed valid cards replace their previous cache entries as soon as they are accepted. If the refresh remains incomplete, a later normal run requests only the unresolved entries and uses the refreshed accepted cards as context. The previous complete `.apkg` remains untouched until the refresh is complete, and final package replacement is atomic.
+
+This cache format is intentionally separate from the legacy per-card generation cache. The first run after upgrading therefore performs one complete coordinated regeneration. LLM generation no longer accepts the `generation.parallelism` setting or `--parallelism` option because pending cards share one batch request. Audio generation remains sequential and was never controlled by that setting.
+
+Removing a line from the input omits that note from the next generated `.apkg`. Importing the replacement package into Anki does not delete a note that is already present in the collection; remove such notes manually in Anki.
 
 ## Audio Generation
 Audio generation is disabled by default. Enable it in the config file:
@@ -304,7 +299,7 @@ When enabled, the app:
 - reuses existing files in `audio.directory` for unchanged text, voice, and output format
 - writes Anki `[sound:...]` references into the note fields and bundles the media into the `.apkg`
 
-Audio failures are non-fatal for deck writing. The affected sound reference is omitted, the deck is still written for successful cards, and the CLI exits with a non-zero status.
+Audio failures are non-fatal for deck writing. All cards are still written, only the affected sound references are omitted, and the CLI exits with a non-zero status.
 
 ## Testing
 Run the test suite with:
@@ -317,8 +312,8 @@ Included tests cover:
 - schema validation
 - LLM response parsing
 - deck generation
-- pipeline caching and partial-failure behavior
+- incremental batch caching, retry, and incomplete-deck behavior
 
 ## Notes
 - The client targets OpenAI-compatible chat-completions APIs.
-- If some items fail validation after all retries, the deck is still written for successful items and the CLI exits with a non-zero status.
+- If some entries remain unresolved after all retries, their valid batch peers stay cached, no incomplete deck is written, and the CLI exits with a non-zero status.

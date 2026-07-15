@@ -25,6 +25,20 @@ def test_audio_settings_are_disabled_by_default(tmp_path: Path) -> None:
     assert settings.audio.directory == Path(".cache/audio")
 
 
+def test_batch_generation_defaults_to_large_output_budget(tmp_path: Path) -> None:
+    settings = AppSettings.model_validate(base_settings_payload(tmp_path))
+
+    assert settings.llm.max_tokens == 65536
+
+
+def test_removed_generation_parallelism_setting_is_rejected(tmp_path: Path) -> None:
+    payload = base_settings_payload(tmp_path)
+    payload["generation"] = {"parallelism": 4}
+
+    with pytest.raises(ValidationError, match="parallelism"):
+        AppSettings.model_validate(payload)
+
+
 def test_enabled_audio_requires_azure_credentials_and_location(tmp_path: Path) -> None:
     payload = base_settings_payload(tmp_path)
     payload["audio"] = {"enabled": True}

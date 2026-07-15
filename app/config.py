@@ -29,7 +29,7 @@ class LLMSettings(StrictModel):
     max_retries: int = 2
     retry_backoff_seconds: float = 1.0
     temperature: float = 0.2
-    max_tokens: int = 800
+    max_tokens: int = 65536
 
     @field_validator("base_url", "api_token", "model_name")
     @classmethod
@@ -55,15 +55,6 @@ class GenerationSettings(StrictModel):
     default_lesson: str | None = None
     default_exam_level: str = "A2 Inburgering Spreken"
     json_repair_enabled: bool = True
-    parallelism: int = 4
-
-    @field_validator("parallelism")
-    @classmethod
-    def validate_parallelism(cls, value: int) -> int:
-        """Require a positive worker count."""
-        if value < 1:
-            raise ValueError("parallelism must be at least 1")
-        return value
 
 
 class CacheSettings(StrictModel):

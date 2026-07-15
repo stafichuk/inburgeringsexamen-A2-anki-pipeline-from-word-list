@@ -27,7 +27,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exam-level", help="Override the exam level label.")
     parser.add_argument("--force", action="store_true", help="Regenerate cards even if cache entries exist.")
     parser.add_argument("--log-level", help="Override the log level (DEBUG, INFO, WARNING, ERROR).")
-    parser.add_argument("--parallelism", type=int, help="Maximum number of parallel LLM requests.")
     parser.add_argument("--base-url", help="Override the LLM chat-completions base URL.")
     parser.add_argument("--api-token", help="Override the LLM API token.")
     parser.add_argument("--model", help="Override the LLM model name.")
@@ -92,9 +91,6 @@ def build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         generation_overrides["default_lesson"] = args.lesson
     if args.exam_level:
         generation_overrides["default_exam_level"] = args.exam_level
-    if args.parallelism is not None:
-        generation_overrides["parallelism"] = args.parallelism
-
     deck_overrides: dict[str, Any] = {}
     if args.deck_name:
         deck_overrides["deck_name"] = args.deck_name
@@ -152,13 +148,20 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
     )
 
-    logging.info(
-        "Deck written to %s (%s/%s cards, %s cache hits).",
-        result.output_path,
-        result.generated_items,
-        result.total_items,
-        result.cached_items,
-    )
+    if result.deck_written:
+        logging.info(
+            "Deck written to %s (%s/%s cards, %s cache hits).",
+            result.output_path,
+            result.generated_items,
+            result.total_items,
+            result.cached_items,
+        )
+    else:
+        logging.error(
+            "Deck not written; %s/%s cards are accepted and cached.",
+            result.generated_items,
+            result.total_items,
+        )
 
     if result.failed_items:
         summary = json.dumps([asdict(item) for item in result.failed_items], ensure_ascii=False, indent=2)

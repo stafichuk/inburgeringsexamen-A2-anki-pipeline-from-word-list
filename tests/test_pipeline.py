@@ -1,22 +1,22 @@
-import time
+from collections.abc import Callable
 from pathlib import Path
 
 import app.pipeline as pipeline_module
 from app.audio import AudioGenerationError
 from app.cache import CardCache
 from app.config import AppSettings
+from app.llm_client import BatchGenerationResult
 from app.models import GeneratedCard, SourceItem, VerbForms
 from app.pipeline import DeckGenerationPipeline, load_source_items
 
 
-def make_settings(cache_dir: Path, *, parallelism: int = 4, audio_enabled: bool = False) -> AppSettings:
+def make_settings(cache_dir: Path, *, audio_enabled: bool = False) -> AppSettings:
     payload = {
         "llm": {
             "base_url": "https://example.invalid/v1/chat/completions",
             "api_token": "token",
             "model_name": "test-model",
         },
-        "generation": {"parallelism": parallelism},
         "cache": {"directory": str(cache_dir)},
     }
     if audio_enabled:
@@ -103,21 +103,38 @@ def make_noun_card(word: str) -> GeneratedCard:
 class FakeClient:
     def __init__(self) -> None:
         self.calls = 0
+        self.pending_batches: list[list[str]] = []
+        self.existing_contexts: list[list[str]] = []
 
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
-        self.calls += 1
+    def make_card_for(self, source_item: SourceItem) -> GeneratedCard:
         return make_card(source_item.text)
+
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
+        self.calls += 1
+        self.pending_batches.append([source_item.text for _, source_item in pending_items])
+        self.existing_contexts.append([source_item.text for source_item, _ in existing_cards])
+        cards = {
+            source_id: self.make_card_for(source_item)
+            for source_id, source_item in pending_items
+        }
+        if on_card_accepted is not None:
+            for source_id, card in cards.items():
+                on_card_accepted(source_id, card)
+        return BatchGenerationResult(cards=cards)
 
 
 class NounClient(FakeClient):
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
-        self.calls += 1
+    def make_card_for(self, source_item: SourceItem) -> GeneratedCard:
         return make_noun_card(source_item.text)
 
 
 class TranslationHintNounClient(FakeClient):
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
-        self.calls += 1
+    def make_card_for(self, source_item: SourceItem) -> GeneratedCard:
         translation = source_item.translation_hint or "родственник"
         bare_form = source_item.text.removeprefix("de ").removeprefix("het ")
         return GeneratedCard(
@@ -147,23 +164,65 @@ class TranslationHintNounClient(FakeClient):
 
 
 class PartiallyFailingClient(FakeClient):
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
         self.calls += 1
-        if source_item.text == "fout":
-            raise ValueError("invalid payload")
-        return make_card(source_item.text)
-
-
-class SlowOrderedClient(FakeClient):
-    def generate_card(self, source_item: SourceItem) -> GeneratedCard:
-        self.calls += 1
-        delays = {
-            "eerste": 0.2,
-            "tweede": 0.05,
-            "derde": 0.1,
+        self.pending_batches.append([source_item.text for _, source_item in pending_items])
+        self.existing_contexts.append([source_item.text for source_item, _ in existing_cards])
+        cards = {
+            source_id: make_card(source_item.text)
+            for source_id, source_item in pending_items
+            if source_item.text != "fout"
         }
-        time.sleep(delays[source_item.text])
-        return make_card(source_item.text)
+        failures = {
+            source_id: "invalid payload"
+            for source_id, source_item in pending_items
+            if source_item.text == "fout"
+        }
+        if on_card_accepted is not None:
+            for source_id, card in cards.items():
+                on_card_accepted(source_id, card)
+        return BatchGenerationResult(cards=cards, failures=failures)
+
+
+class ReverseOrderClient(FakeClient):
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
+        self.calls += 1
+        reversed_items = list(reversed(pending_items))
+        cards = {
+            source_id: make_card(source_item.text)
+            for source_id, source_item in reversed_items
+        }
+        if on_card_accepted is not None:
+            for source_id, card in cards.items():
+                on_card_accepted(source_id, card)
+        return BatchGenerationResult(cards=cards)
+
+
+class InterruptingAfterAcceptanceClient(FakeClient):
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
+        self.calls += 1
+        self.pending_batches.append([source_item.text for _, source_item in pending_items])
+        self.existing_contexts.append([source_item.text for source_item, _ in existing_cards])
+        source_id, source_item = pending_items[0]
+        card = make_card(source_item.text)
+        if on_card_accepted is not None:
+            on_card_accepted(source_id, card)
+        raise pipeline_module.LLMClientError("connection failed during retry")
 
 
 class FakeAudioGenerator:
@@ -204,6 +263,8 @@ def test_pipeline_uses_cache_without_calling_llm(tmp_path: Path) -> None:
     first_result = pipeline.run(input_path=input_path, output_path=output_path)
     assert first_result.generated_items == 1
     assert first_client.calls == 1
+    assert first_client.pending_batches == [["leren"]]
+    assert first_client.existing_contexts == [[]]
 
     second_client = FakeClient()
     second_pipeline = DeckGenerationPipeline(settings, llm_client=second_client, cache=CardCache(settings.cache.directory))
@@ -211,6 +272,29 @@ def test_pipeline_uses_cache_without_calling_llm(tmp_path: Path) -> None:
 
     assert second_result.cached_items == 1
     assert second_client.calls == 0
+
+
+def test_pipeline_generates_only_added_words_with_cached_cards_as_context(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\nwerken\n", encoding="utf-8")
+    settings = make_settings(tmp_path / ".cache")
+
+    DeckGenerationPipeline(settings, llm_client=FakeClient()).run(
+        input_path=input_path,
+        output_path=tmp_path / "first.apkg",
+    )
+
+    input_path.write_text("leren\nwerken\nwonen\n", encoding="utf-8")
+    incremental_client = FakeClient()
+    result = DeckGenerationPipeline(settings, llm_client=incremental_client).run(
+        input_path=input_path,
+        output_path=tmp_path / "second.apkg",
+    )
+
+    assert result.deck_written is True
+    assert result.cached_items == 2
+    assert incremental_client.pending_batches == [["wonen"]]
+    assert incremental_client.existing_contexts == [["leren", "werken"]]
 
 
 def test_pipeline_force_bypasses_cache(tmp_path: Path) -> None:
@@ -231,28 +315,143 @@ def test_pipeline_force_bypasses_cache(tmp_path: Path) -> None:
 
     assert result.cached_items == 0
     assert forced_client.calls == 1
+    assert forced_client.pending_batches == [["leren"]]
+    assert forced_client.existing_contexts == [[]]
 
 
-def test_pipeline_writes_partial_deck_and_reports_failures(tmp_path: Path) -> None:
+def test_pipeline_caches_partial_success_but_preserves_existing_deck(tmp_path: Path) -> None:
     input_path = tmp_path / "words.txt"
     input_path.write_text("leren\nfout\n", encoding="utf-8")
     output_path = tmp_path / "deck.apkg"
+    output_path.write_text("previous complete deck", encoding="utf-8")
     settings = make_settings(tmp_path / ".cache")
 
     client = PartiallyFailingClient()
     result = DeckGenerationPipeline(settings, llm_client=client).run(input_path=input_path, output_path=output_path)
 
-    assert output_path.exists()
+    assert output_path.read_text(encoding="utf-8") == "previous complete deck"
+    assert result.deck_written is False
     assert result.generated_items == 1
     assert len(result.failed_items) == 1
     assert result.failed_items[0].source_word == "fout"
 
+    retry_client = FakeClient()
+    retry_result = DeckGenerationPipeline(settings, llm_client=retry_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
 
-def test_pipeline_preserves_input_order_with_parallel_generation(tmp_path: Path, monkeypatch) -> None:
+    assert retry_result.deck_written is True
+    assert retry_client.pending_batches == [["fout"]]
+    assert retry_client.existing_contexts == [["leren"]]
+
+
+def test_pipeline_persists_an_accepted_card_before_a_later_batch_error(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\nwerken\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    output_path.write_text("previous complete deck", encoding="utf-8")
+    settings = make_settings(tmp_path / ".cache")
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=InterruptingAfterAcceptanceClient(),
+    ).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert result.deck_written is False
+    assert result.generated_items == 1
+    assert output_path.read_text(encoding="utf-8") == "previous complete deck"
+
+    retry_client = FakeClient()
+    retry_result = DeckGenerationPipeline(settings, llm_client=retry_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert retry_result.deck_written is True
+    assert retry_client.pending_batches == [["werken"]]
+    assert retry_client.existing_contexts == [["leren"]]
+
+
+def test_force_partial_refresh_discards_failed_old_cache_and_resumes(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\nfout\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache")
+
+    DeckGenerationPipeline(settings, llm_client=FakeClient()).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+    previous_deck = output_path.read_bytes()
+
+    forced_result = DeckGenerationPipeline(
+        settings,
+        llm_client=PartiallyFailingClient(),
+    ).run(
+        input_path=input_path,
+        output_path=output_path,
+        force=True,
+    )
+
+    assert forced_result.deck_written is False
+    assert forced_result.cached_items == 0
+    assert output_path.read_bytes() == previous_deck
+
+    retry_client = FakeClient()
+    retry_result = DeckGenerationPipeline(settings, llm_client=retry_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert retry_result.deck_written is True
+    assert retry_client.pending_batches == [["fout"]]
+    assert retry_client.existing_contexts == [["leren"]]
+
+
+def test_force_refresh_marker_suppresses_all_old_cards_after_interruption(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("leren\nwerken\n", encoding="utf-8")
+    settings = make_settings(tmp_path / ".cache")
+
+    DeckGenerationPipeline(settings, llm_client=FakeClient()).run(
+        input_path=input_path,
+        output_path=tmp_path / "first.apkg",
+    )
+
+    cache = CardCache(settings.cache.directory)
+    source_items = load_source_items(
+        input_path,
+        topic=settings.generation.default_topic,
+        lesson=settings.generation.default_lesson,
+        exam_level=settings.generation.default_exam_level,
+    )
+    cache.begin_refresh(source_items)
+
+    resumed_client = FakeClient()
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=resumed_client,
+        cache=cache,
+    ).run(
+        input_path=input_path,
+        output_path=tmp_path / "resumed.apkg",
+    )
+
+    assert result.deck_written is True
+    assert result.cached_items == 0
+    assert resumed_client.pending_batches == [["leren", "werken"]]
+    assert resumed_client.existing_contexts == [[]]
+
+
+def test_pipeline_preserves_input_order_when_batch_response_is_reversed(tmp_path: Path, monkeypatch) -> None:
     input_path = tmp_path / "words.txt"
     input_path.write_text("eerste\ntweede\nderde\n", encoding="utf-8")
     output_path = tmp_path / "deck.apkg"
-    settings = make_settings(tmp_path / ".cache", parallelism=3)
+    settings = make_settings(tmp_path / ".cache")
     captured_order: list[str] = []
 
     def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
@@ -262,7 +461,7 @@ def test_pipeline_preserves_input_order_with_parallel_generation(tmp_path: Path,
 
     monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
 
-    client = SlowOrderedClient()
+    client = ReverseOrderClient()
     result = DeckGenerationPipeline(settings, llm_client=client).run(input_path=input_path, output_path=output_path)
 
     assert result.generated_items == 3
@@ -273,7 +472,7 @@ def test_pipeline_keeps_duplicate_words_with_distinct_translation_hints(tmp_path
     input_path = tmp_path / "words.txt"
     input_path.write_text("de neef - племянник\nde neef - двоюродный брат\n", encoding="utf-8")
     output_path = tmp_path / "deck.apkg"
-    settings = make_settings(tmp_path / ".cache", parallelism=1)
+    settings = make_settings(tmp_path / ".cache")
     captured_cards: list[tuple[str, str | None, str]] = []
 
     def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
@@ -294,7 +493,7 @@ def test_pipeline_keeps_duplicate_words_with_distinct_translation_hints(tmp_path
 
     assert result.generated_items == 2
     assert result.cached_items == 0
-    assert client.calls == 2
+    assert client.calls == 1
     assert captured_cards == [
         ("de neef", "племянник", "племянник"),
         ("de neef", "двоюродный брат", "двоюродный брат"),
@@ -309,8 +508,8 @@ def test_load_source_items_parses_plain_and_hinted_lines(tmp_path: Path) -> None
                 "# Familie",
                 "",
                 "de broer",
-                "de neef - племянник",
-                "de neef - двоюродный брат",
+                "[neef-nephew] de neef - племянник",
+                "[neef-cousin] de neef - двоюродный брат",
                 "e-mail",
                 "kinderopvang - детский сад",
             ]
@@ -327,7 +526,34 @@ def test_load_source_items_parses_plain_and_hinted_lines(tmp_path: Path) -> None
         ("e-mail", None),
         ("kinderopvang", "детский сад"),
     ]
+    assert [item.entry_id for item in items] == [
+        None,
+        "neef-nephew",
+        "neef-cousin",
+        None,
+        None,
+    ]
     assert all(item.topic == "Familie" for item in items)
+
+
+def test_load_source_items_rejects_duplicate_identities(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("de broer\nDe   broer\n", encoding="utf-8")
+
+    try:
+        load_source_items(input_path, topic="Familie", lesson="Les 1", exam_level="A2")
+    except ValueError as exc:
+        assert "duplicate source identity on lines 1 and 2" in str(exc)
+        assert "[id]" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("duplicate identity should have failed")
+
+
+def test_explicit_id_remains_stable_when_word_is_corrected() -> None:
+    original = SourceItem(entry_id="friend", text="de vrient", topic="Familie", lesson="Les 1")
+    corrected = SourceItem(entry_id="friend", text="de vriend", topic="Familie", lesson="Les 1")
+
+    assert original.identity_key() == corrected.identity_key()
 
 
 def test_load_source_items_rejects_malformed_translation_hints(tmp_path: Path) -> None:

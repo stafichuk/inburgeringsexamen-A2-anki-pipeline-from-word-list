@@ -1,6 +1,10 @@
+import hashlib
 import json
 from pathlib import Path
 import zipfile
+
+import genanki
+import pytest
 
 from app.anki import (
     NOTE_FIELDS,
@@ -108,6 +112,43 @@ def test_note_guid_includes_translation_hint() -> None:
     assert build_note_guid(nephew) != build_note_guid(cousin)
     assert build_note_guid(nephew) != build_note_guid(plain)
     assert build_note_guid(cousin) != build_note_guid(plain)
+
+
+def test_implicit_note_guid_normalizes_word_and_hint_like_identity() -> None:
+    canonical = SourceItem(
+        text="de neef",
+        translation_hint="двоюродный брат",
+        topic="Familie",
+        lesson="Les 1",
+    )
+    equivalent = SourceItem(
+        text="DE   NEEF",
+        translation_hint="ДВОЮРОДНЫЙ\tБРАТ",
+        topic="Familie",
+        lesson="Les 1",
+    )
+
+    assert canonical.identity_key() == equivalent.identity_key()
+    assert build_note_guid(canonical) == build_note_guid(equivalent)
+
+
+def test_implicit_note_guid_preserves_old_seed_for_normalized_item() -> None:
+    source_item = SourceItem(
+        text="de neef",
+        translation_hint="племянник",
+        topic="Familie",
+        lesson="Les 1",
+    )
+    old_seed = "de neef|племянник|Familie|Les 1"
+
+    assert build_note_guid(source_item) == hashlib.md5(old_seed.encode("utf-8")).hexdigest()
+
+
+def test_explicit_id_preserves_note_guid_across_word_correction() -> None:
+    original = SourceItem(entry_id="friend", text="de vrient", topic="Familie", lesson="Les 1")
+    corrected = SourceItem(entry_id="friend", text="de vriend", topic="Familie", lesson="Les 1")
+
+    assert build_note_guid(original) == build_note_guid(corrected)
 
 
 def test_note_model_contains_expected_fields() -> None:
@@ -494,3 +535,34 @@ def test_deck_package_includes_plural_audio_media(tmp_path: Path) -> None:
         "singular-example.mp3",
         "word.mp3",
     ]
+
+
+def test_deck_package_write_failure_preserves_existing_output_and_removes_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "school.apkg"
+    output_path.write_bytes(b"existing complete deck")
+    write_paths: list[Path] = []
+
+    def fail_after_partial_write(_package: genanki.Package, filename: str) -> None:
+        write_path = Path(filename)
+        write_paths.append(write_path)
+        write_path.write_bytes(b"partial deck")
+        raise RuntimeError("package write failed")
+
+    monkeypatch.setattr(genanki.Package, "write_to_file", fail_after_partial_write)
+
+    with pytest.raises(RuntimeError, match="package write failed"):
+        build_deck_package(
+            [(SourceItem(text="leren"), make_card())],
+            output_path,
+            "Lesson 3 - De school",
+            DeckSettings(),
+        )
+
+    assert len(write_paths) == 1
+    assert write_paths[0] != output_path
+    assert write_paths[0].parent == output_path.parent
+    assert not write_paths[0].exists()
+    assert output_path.read_bytes() == b"existing complete deck"
