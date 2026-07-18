@@ -137,6 +137,14 @@ def test_prompt_normalizes_plural_noun_inputs_to_singular_lemma() -> None:
     assert 'plural_form "ouders"' in user_prompt
 
 
+def test_prompt_distinguishes_article_bearing_noun_from_bare_example_forms() -> None:
+    user_prompt = _build_single_item_prompt(SourceItem(text="het hoofd", topic="Het lichaam"))
+
+    assert 'dutch_word "het hoofd"' in user_prompt
+    assert 'singular form "hoofd" in "Mijn hoofd doet pijn."' in user_prompt
+    assert "Never include de or het in a noun form_examples form" in user_prompt
+
+
 def test_prompt_teaches_month_names_as_de_nouns() -> None:
     source_item = SourceItem(text="januari", topic="Het formulier en de agenda")
 

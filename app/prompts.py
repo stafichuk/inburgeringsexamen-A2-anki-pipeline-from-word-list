@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-07-14.3"
+PROMPT_VERSION = "2026-07-17.1"
 
 
 def _pending_payload(pending_items: list[tuple[int, SourceItem]]) -> list[dict[str, object]]:
@@ -96,7 +96,7 @@ Card rules:
 - Dutch example sentences must be simple A2-level Dutch.
 - Always fill all common required fields.
 - For non-verbs, every form_examples entry must use the exact visible Dutch form in the form field, and that form must appear in example_sentence_nl.
-- For nouns, dutch_word must include the article directly, e.g. "de tante" or "het huis".
+- For nouns, dutch_word must include the article directly, e.g. "de tante" or "het huis". In noun form_examples, form must be the bare noun that is visible in the sentence. Never include de or het in a noun form_examples form. For example, dutch_word "het hoofd" uses singular form "hoofd" in "Mijn hoofd doet pijn.", and dutch_word "de tante" uses singular form "tante" in "Mijn tante woont in Amsterdam.".
 - Month names are Dutch de-nouns. For month-name cards, set dutch_word to "de januari", "de februari", "de maart", "de april", "de mei", "de juni", "de juli", "de augustus", "de september", "de oktober", "de november", or "de december". Use the bare month name in form_examples. Set plural_form to null and include one default form_example unless the input explicitly asks for a plural month form.
 - If an input item is already a plural noun, normalize it to the singular lemma in dutch_word and keep the input plural as plural_form. For example, input "de ouders" must produce dutch_word "de ouder" and plural_form "ouders".
 - For countable nouns, plural_form must be the bare plural form without article. Include front_hint in Russian and explicitly prompt plural recall. Include exactly two form_examples: singular and plural.

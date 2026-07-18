@@ -732,6 +732,8 @@ def test_form_example_rejects_sentence_without_the_form() -> None:
     try:
         GeneratedCard.model_validate(payload)
     except ValidationError as exc:
-        assert "form must appear" in str(exc)
+        message = str(exc)
+        assert "form 'mooi' must appear" in message
+        assert "'Het huis is groot.'" in message
     else:  # pragma: no cover
         raise AssertionError("validation should have failed")

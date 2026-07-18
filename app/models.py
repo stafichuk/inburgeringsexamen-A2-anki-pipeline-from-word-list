@@ -374,7 +374,10 @@ class GeneratedCard(StrictModel):
             form_tokens = set(_word_tokens(example.form))
             example_tokens = set(_word_tokens(example.example_sentence_nl))
             if form_tokens and not form_tokens.issubset(example_tokens):
-                raise ValueError("form must appear in example_sentence_nl")
+                raise ValueError(
+                    f"form {example.form!r} must appear in "
+                    f"example_sentence_nl {example.example_sentence_nl!r}"
+                )
 
     def _normalize_uncountable_form_example_kind(self) -> None:
         """Treat one singular example as the default example for uncountable nouns."""
