@@ -13,7 +13,7 @@ from urllib import error, request
 from pydantic import ValidationError
 
 from .config import LLMSettings
-from .models import GeneratedCard, SourceItem
+from .models import GeneratedCard, SourceItem, matches_explicit_dutch_answer
 from .prompts import build_messages
 
 LOGGER = logging.getLogger(__name__)
@@ -164,9 +164,22 @@ def parse_generated_cards(
 
         raw_card = raw_item.get("card")
         try:
-            result.cards[source_id] = GeneratedCard.model_validate(raw_card)
+            card = GeneratedCard.model_validate(raw_card)
         except ValidationError as exc:
             result.errors[source_id] = f"card does not match schema: {exc}"
+            continue
+
+        source_item = expected_items[source_id]
+        if source_item.concept is not None and not matches_explicit_dutch_answer(
+            card.dutch_word,
+            source_item.text,
+        ):
+            result.errors[source_id] = (
+                "card replaced an explicitly accepted Dutch answer: "
+                f"expected {source_item.text!r}, got {card.dutch_word!r}"
+            )
+            continue
+        result.cards[source_id] = card
 
     return result
 

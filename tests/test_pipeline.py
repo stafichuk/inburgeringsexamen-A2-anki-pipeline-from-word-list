@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 import app.pipeline as pipeline_module
 from app.audio import AudioGenerationError
 from app.cache import CardCache
@@ -100,6 +102,27 @@ def make_noun_card(word: str) -> GeneratedCard:
     )
 
 
+def make_alternative_card(source_item: SourceItem) -> GeneratedCard:
+    """Build a schema-valid leaf card without coupling grouping tests to noun rules."""
+    translation = source_item.translation_hint or "перевод"
+    return GeneratedCard(
+        dutch_word=source_item.text,
+        russian_translation=translation,
+        part_of_speech="phrase",
+        ipa_transcription="test-ipa",
+        lesson_topic=source_item.topic or "A2",
+        form_examples=[
+            {
+                "kind": "default",
+                "form": source_item.text,
+                "example_sentence_nl": f"Ik ken {source_item.text}.",
+                "example_sentence_ru": f"Я знаю выражение: {translation}.",
+            }
+        ],
+        tags=["alternative"],
+    )
+
+
 class FakeClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -161,6 +184,41 @@ class TranslationHintNounClient(FakeClient):
             plural_form="neven",
             front_hint=f"{translation} (множественное число?)",
         )
+
+
+class AlternativeClient(FakeClient):
+    def make_card_for(self, source_item: SourceItem) -> GeneratedCard:
+        return make_alternative_card(source_item)
+
+
+class PartiallyFailingAlternativeClient(AlternativeClient):
+    def __init__(self, failing_word: str) -> None:
+        super().__init__()
+        self.failing_word = failing_word
+
+    def generate_cards(
+        self,
+        pending_items: list[tuple[int, SourceItem]],
+        existing_cards: list[tuple[SourceItem, GeneratedCard]],
+        on_card_accepted: Callable[[int, GeneratedCard], None] | None = None,
+    ) -> BatchGenerationResult:
+        self.calls += 1
+        self.pending_batches.append([source_item.text for _, source_item in pending_items])
+        self.existing_contexts.append([source_item.text for source_item, _ in existing_cards])
+        cards = {
+            source_id: self.make_card_for(source_item)
+            for source_id, source_item in pending_items
+            if source_item.text != self.failing_word
+        }
+        failures = {
+            source_id: "invalid alternative payload"
+            for source_id, source_item in pending_items
+            if source_item.text == self.failing_word
+        }
+        if on_card_accepted is not None:
+            for source_id, card in cards.items():
+                on_card_accepted(source_id, card)
+        return BatchGenerationResult(cards=cards, failures=failures)
 
 
 class PartiallyFailingClient(FakeClient):
@@ -249,6 +307,13 @@ class FailingVerbFormAudioGenerator(FakeAudioGenerator):
     def generate_audio(self, text: str, *, label: str) -> Path:
         if label == "verb-perfect":
             raise AudioGenerationError("verb form synthesis failed")
+        return super().generate_audio(text, label=label)
+
+
+class FailingOneAlternativeAudioGenerator(FakeAudioGenerator):
+    def generate_audio(self, text: str, *, label: str) -> Path:
+        if "de kleren" in text:
+            raise AudioGenerationError("alternative synthesis failed")
         return super().generate_audio(text, label=label)
 
 
@@ -710,3 +775,290 @@ def test_pipeline_reports_partial_audio_failures(tmp_path: Path, monkeypatch) ->
     assert audio.example_audios[0] is not None
     assert audio.example_audios[1] is None
     assert audio.example_audios[2] is not None
+
+
+def test_load_source_items_expands_grouped_answers_with_shared_concept(tmp_path: Path) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "[clothes] de kleding | de kleren - одежда\n",
+        encoding="utf-8",
+    )
+
+    items = load_source_items(
+        input_path,
+        topic="Kleding",
+        lesson="Les 1",
+        exam_level="A2",
+    )
+
+    assert [item.text for item in items] == ["de kleding", "de kleren"]
+    assert [item.answer_index for item in items] == [0, 1]
+    assert [item.entry_id for item in items] == ["clothes", None]
+    assert all(item.translation_hint == "одежда" for item in items)
+    assert all(item.topic == "Kleding" for item in items)
+    assert all(item.lesson == "Les 1" for item in items)
+    assert all(item.exam_level == "A2" for item in items)
+
+    concept = items[0].concept
+    assert concept is not None
+    assert items[1].concept is concept
+    assert concept.entry_id == "clothes"
+    assert concept.dutch_answers == ("de kleding", "de kleren")
+    assert concept.translation_hint == "одежда"
+    assert concept.source_text() == "de kleding | de kleren"
+    assert [item.text for item in concept.source_items()] == ["de kleding", "de kleren"]
+    assert items[0].accepted_dutch_answers == ("de kleding", "de kleren")
+    assert items[1].accepted_dutch_answers == ("de kleding", "de kleren")
+    assert items[0].concept_identity_key() == items[1].concept_identity_key()
+
+
+@pytest.mark.parametrize(
+    ("bad_line", "expected_fragment"),
+    [
+        ("de kleding | - одежда", "alternative"),
+        ("de kleding |  | de kleren - одежда", "alternative"),
+        ("de kleding|de kleren - одежда", " | "),
+        ("de kleding  |  de kleren - одежда", " | "),
+        ("de kleding | DE   KLEDING - одежда", "duplicate"),
+        ("de kleding | de kleren", "translation hint"),
+    ],
+)
+def test_load_source_items_rejects_invalid_grouped_answers(
+    tmp_path: Path,
+    bad_line: str,
+    expected_fragment: str,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(f"{bad_line}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_source_items(input_path, topic=None, lesson=None, exam_level=None)
+
+    message = str(exc_info.value)
+    assert "line 1" in message
+    assert expected_fragment in message
+
+
+def test_pipeline_adding_group_sibling_reuses_first_answer_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text("de kleding - одежда\n", encoding="utf-8")
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache")
+    published_answers: list[list[str]] = []
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        published_answers.append([source_item.text for source_item, _ in cards])
+        output_path.write_text("complete deck", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    first_client = AlternativeClient()
+    first_result = DeckGenerationPipeline(settings, llm_client=first_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+    assert first_result.total_items == 1
+    assert first_result.generated_items == 1
+    assert first_result.cached_items == 0
+
+    input_path.write_text(
+        "de kleding | de kleren - одежда\n",
+        encoding="utf-8",
+    )
+    sibling_client = AlternativeClient()
+    sibling_result = DeckGenerationPipeline(settings, llm_client=sibling_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert sibling_result.total_items == 1
+    assert sibling_result.generated_items == 1
+    assert sibling_result.cached_items == 0
+    assert sibling_client.pending_batches == [["de kleren"]]
+    assert sibling_client.existing_contexts == [["de kleding"]]
+    assert published_answers[-1] == ["de kleding", "de kleren"]
+
+    cached_client = AlternativeClient()
+    cached_result = DeckGenerationPipeline(settings, llm_client=cached_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert cached_result.total_items == 1
+    assert cached_result.generated_items == 1
+    assert cached_result.cached_items == 1
+    assert cached_client.calls == 0
+
+
+def test_pipeline_regenerates_stale_cache_that_replaced_group_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "de kleding | de kleren - одежда\n",
+        encoding="utf-8",
+    )
+    settings = make_settings(tmp_path / ".cache")
+    cache = CardCache(settings.cache.directory)
+    standalone = SourceItem(text="de kleding", translation_hint="одежда")
+    stale_card = make_alternative_card(standalone).model_copy(
+        update={"dutch_word": "de garderobe"}
+    )
+    cache.set(
+        standalone,
+        stale_card,
+        model_name="old-model",
+        prompt_version="old-prompt",
+    )
+    published_answers: list[str] = []
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        published_answers.extend(card.dutch_word for _, card in cards)
+        output_path.write_text("complete deck", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+    client = AlternativeClient()
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=client,
+        cache=cache,
+    ).run(input_path=input_path, output_path=tmp_path / "deck.apkg")
+
+    assert result.deck_written is True
+    assert result.cached_items == 0
+    assert client.pending_batches == [["de kleding", "de kleren"]]
+    assert published_answers == ["de kleding", "de kleren"]
+
+
+def test_pipeline_aligns_partial_audio_with_grouped_answers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "de kleding | de kleren - одежда\n",
+        encoding="utf-8",
+    )
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    captured_audio_by_guid = {}
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_audio_by_guid.update(audio_by_guid or {})
+        output_path.write_text("complete deck", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=AlternativeClient(),
+        audio_generator=FailingOneAlternativeAudioGenerator(tmp_path / "audio"),
+    ).run(input_path=input_path, output_path=tmp_path / "deck.apkg")
+
+    grouped_audio = next(iter(captured_audio_by_guid.values()))
+    assert isinstance(grouped_audio, tuple)
+    assert len(grouped_audio) == 2
+    assert grouped_audio[0] is not None
+    assert grouped_audio[0].word_audio is not None
+    assert grouped_audio[1] is None
+    assert len(result.audio_failed_items) == 2
+    assert {failure.source_word for failure in result.audio_failed_items} == {"de kleren"}
+
+
+def test_pipeline_partial_group_is_cached_but_not_published_until_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "de kleding | de kleren - одежда\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "deck.apkg"
+    output_path.write_text("previous complete deck", encoding="utf-8")
+    settings = make_settings(tmp_path / ".cache")
+    published_answers: list[list[str]] = []
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        published_answers.append([source_item.text for source_item, _ in cards])
+        output_path.write_text("new complete deck", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    failing_client = PartiallyFailingAlternativeClient("de kleren")
+    failed_result = DeckGenerationPipeline(settings, llm_client=failing_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert failed_result.total_items == 1
+    assert failed_result.generated_items == 0
+    assert failed_result.cached_items == 0
+    assert failed_result.deck_written is False
+    assert [item.source_word for item in failed_result.failed_items] == ["de kleren"]
+    assert output_path.read_text(encoding="utf-8") == "previous complete deck"
+    assert published_answers == []
+
+    retry_client = AlternativeClient()
+    retry_result = DeckGenerationPipeline(settings, llm_client=retry_client).run(
+        input_path=input_path,
+        output_path=output_path,
+    )
+
+    assert retry_result.total_items == 1
+    assert retry_result.generated_items == 1
+    assert retry_result.cached_items == 0
+    assert retry_result.deck_written is True
+    assert retry_client.pending_batches == [["de kleren"]]
+    assert retry_client.existing_contexts == [["de kleding"]]
+    assert published_answers == [["de kleding", "de kleren"]]
+    assert output_path.read_text(encoding="utf-8") == "new complete deck"
+
+
+def test_pipeline_counts_grouped_answers_as_one_concept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "words.txt"
+    input_path.write_text(
+        "de kleding | de kleren - одежда\nleren - учиться\n",
+        encoding="utf-8",
+    )
+    settings = make_settings(tmp_path / ".cache")
+    captured_answers: list[str] = []
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_answers.extend(source_item.text for source_item, _ in cards)
+        output_path.write_text("complete deck", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    first_result = DeckGenerationPipeline(settings, llm_client=AlternativeClient()).run(
+        input_path=input_path,
+        output_path=tmp_path / "first.apkg",
+    )
+
+    assert first_result.total_items == 2
+    assert first_result.generated_items == 2
+    assert first_result.cached_items == 0
+    assert captured_answers == ["de kleding", "de kleren", "leren"]
+
+    cached_client = AlternativeClient()
+    cached_result = DeckGenerationPipeline(settings, llm_client=cached_client).run(
+        input_path=input_path,
+        output_path=tmp_path / "cached.apkg",
+    )
+
+    assert cached_result.total_items == 2
+    assert cached_result.generated_items == 2
+    assert cached_result.cached_items == 2
+    assert cached_client.calls == 0

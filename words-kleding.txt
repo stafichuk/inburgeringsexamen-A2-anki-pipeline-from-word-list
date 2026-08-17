@@ -1,0 +1,73 @@
+# Kleding
+de kleding | de kleren - одежда
+de rok - юбка
+de jurk - платье
+de broek - брюки, штаны
+het jasje - куртка, пиджак, жакет
+de jas - куртка, пальто
+de trui - свитер
+de hoed - шляпа
+de pet - кепка
+het T-shirt - футболка
+de laars - сапог
+de schoen - туфля, ботинок, обувная единица
+de pantoffel - тапок
+de handschoen - перчатка
+de sok - носок
+een paar sokken - пара носков
+een paar schoenen - пара обуви, пара туфель или ботинок
+een paar laarzen - пара сапог
+een paar handschoenen - пара перчаток
+de regenjas - дождевик, непромокаемая куртка
+het overhemd - рубашка с воротником и пуговицами
+de blouse - блузка, женская рубашка
+het hemd - майка, нижняя рубашка
+het pak - костюм
+het vest - кардиган, кофта на пуговицах или молнии
+de kous - чулок, высокий носок
+het ondergoed - нижнее бельё
+de onderbroek - трусы
+de beha - бюстгальтер, лифчик
+
+# Voorwerpen en winkelen
+de ring - кольцо
+de portemonnee - кошелёк
+de koffer - чемодан
+de markt - рынок
+het warenhuis - универмаг
+het geld - деньги
+de uitverkoop - распродажа
+de kwaliteit - качество
+de stof - ткань, материал
+het katoen - хлопок
+de winkel - магазин
+de maat - размер
+de knoop - пуговица
+
+# Handelingen
+shoppen - ходить по магазинам, делать покупки
+terugsturen - отправлять обратно, возвращать отправкой
+aankleden - одевать, одеваться
+aandoen - надевать
+uitkleden - раздевать, раздеваться
+uitdoen - снимать, выключать
+kopen - покупать
+verkopen - продавать
+dragen - носить
+passen - примерять, подходить по размеру
+ruilen - обменивать, менять
+drogen - сушить
+wassen - стирать, мыть
+bestellen - заказывать
+
+# Kleding beschrijven
+te groot - слишком большой
+te klein - слишком маленький
+kort - короткий
+lang - длинный
+mooi - красивый
+lelijk - некрасивый, уродливый
+smal - узкий
+breed - широкий
+strak - обтягивающий, тесный, плотно сидящий
+wijd - свободный, широкий

@@ -7,8 +7,9 @@ from dataclasses import dataclass
 import hashlib
 import html
 import os
-from pathlib import Path
+import re
 import tempfile
+from pathlib import Path
 
 import genanki
 
@@ -18,8 +19,10 @@ from .models import (
     FormExample,
     FormExampleKind,
     GeneratedCard,
+    SourceConcept,
     SourceItem,
     VerbForms,
+    matches_explicit_dutch_answer,
 )
 
 EXAMPLE_SLOT_COUNT = 3
@@ -108,6 +111,21 @@ DEFAULT_CSS = """
 .verb-notes {
   margin-top: 6px;
 }
+.variant + .variant {
+  border-top: 1px solid #d9e2ec;
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.variant-word {
+  font-size: 28px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+.variant-ipa {
+  font-style: italic;
+  color: #52606d;
+  margin-bottom: 12px;
+}
 """
 
 EXAMPLE_KIND_LABELS = {
@@ -160,23 +178,35 @@ class NoteAudio:
     example_audios: tuple[Path | None, ...] = ()
 
 
+GroupedNoteAudio = tuple[NoteAudio | None, ...]
+AudioByGuid = Mapping[str, NoteAudio | GroupedNoteAudio]
+
+
 def build_note_guid(source_item: SourceItem) -> str:
     """Build the stable note GUID for a source item."""
-    if source_item.entry_id is not None:
-        normalized_id = " ".join(source_item.entry_id.casefold().split())
+    concept = source_item.concept
+    entry_id = concept.entry_id if concept is not None else source_item.entry_id
+    topic = concept.topic if concept is not None else source_item.topic
+    lesson = concept.lesson if concept is not None else source_item.lesson
+    if entry_id is not None:
+        normalized_id = " ".join(entry_id.casefold().split())
         guid_seed = (
-            f"id:{normalized_id}|{source_item.topic or ''}|{source_item.lesson or ''}"
+            f"id:{normalized_id}|{topic or ''}|{lesson or ''}"
         )
     else:
-        normalized_text = " ".join(source_item.text.casefold().split())
+        identity_text = concept.dutch_answers[0] if concept is not None else source_item.text
+        translation_hint = (
+            concept.translation_hint if concept is not None else source_item.translation_hint
+        )
+        normalized_text = " ".join(identity_text.casefold().split())
         normalized_hint = (
-            " ".join(source_item.translation_hint.casefold().split())
-            if source_item.translation_hint is not None
+            " ".join(translation_hint.casefold().split())
+            if translation_hint is not None
             else ""
         )
         guid_seed = (
             f"{normalized_text}|{normalized_hint}|"
-            f"{source_item.topic or ''}|{source_item.lesson or ''}"
+            f"{topic or ''}|{lesson or ''}"
         )
     return hashlib.md5(guid_seed.encode("utf-8")).hexdigest()
 
@@ -195,6 +225,7 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
                 "afmt": """
 {{FrontSide}}
 <hr id="answer">
+{{#IPA}}
 <div class="word">{{Word_NL}}{{Word_Audio}}{{#Plural}} (meervoud {{Plural}}{{Plural_Audio}}){{/Plural}}</div>
 <div class="ipa">{{IPA}}</div>
 {{#Verb_Infinitive}}<div class="grammar">
@@ -224,6 +255,11 @@ def create_note_model(settings: DeckSettings) -> genanki.Model:
     <div class="example-nl">{{Example_3_NL}}{{Example_3_Audio}}</div>
   </div>{{/Example_3_NL}}
 </div>
+{{/IPA}}
+{{^IPA}}
+{{POS}}
+{{#Word_Audio}}<div class="audio">{{Word_Audio}}</div>{{/Word_Audio}}
+{{/IPA}}
                 """.strip(),
             }
         ],
@@ -286,11 +322,40 @@ def build_front(card: GeneratedCard) -> str:
     if card.part_of_speech.value == "noun":
         hint = card.front_hint or card.russian_translation
         if card.plural_form:
-            return html.escape(card.front_hint or f"{card.russian_translation}{PLURAL_PROMPT_SUFFIX}")
+            hint = _clean_countable_noun_front_hint(
+                hint,
+                plural_form=card.plural_form,
+                fallback=card.russian_translation,
+            )
+            return html.escape(f"{hint}{PLURAL_PROMPT_SUFFIX}")
         if hint.endswith(PLURAL_PROMPT_SUFFIX):
             hint = hint[: -len(PLURAL_PROMPT_SUFFIX)]
         return html.escape(hint)
     return html.escape(card.russian_translation)
+
+
+def _clean_countable_noun_front_hint(hint: str, *, plural_form: str, fallback: str) -> str:
+    """Keep a Russian cue while removing legacy prompts or leaked Dutch answers."""
+    cleaned = hint.strip()
+    opening_parenthesis = cleaned.rfind("(")
+    if opening_parenthesis >= 0 and cleaned.endswith(")"):
+        trailing_group = cleaned[opening_parenthesis:]
+        is_plural_question = "мн" in trailing_group.casefold() and "?" in trailing_group
+        if is_plural_question or _contains_visible_form(trailing_group, plural_form):
+            cleaned = cleaned[:opening_parenthesis].rstrip()
+
+    if _contains_visible_form(cleaned, plural_form):
+        cleaned = ""
+    return cleaned or fallback.strip()
+
+
+def _contains_visible_form(text: str, form: str) -> bool:
+    """Return whether text contains a form outside a larger word."""
+    stripped_form = form.strip()
+    if not stripped_form:
+        return False
+    pattern = rf"(?<!\w){re.escape(stripped_form)}(?!\w)"
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
 
 
 def format_part_of_speech(card: GeneratedCard) -> str:
@@ -370,6 +435,175 @@ def build_example_slot_fields(card: GeneratedCard, audio: NoteAudio | None = Non
     return fields
 
 
+def build_variant_html(card: GeneratedCard, audio: NoteAudio | None = None) -> str:
+    """Render one complete Dutch answer for a grouped concept note."""
+    plural = ""
+    if card.plural_form:
+        plural_audio = audio.plural_audio if audio else None
+        plural = (
+            " (meervoud "
+            f"{html.escape(card.plural_form)}{format_audio_reference(plural_audio)})"
+        )
+
+    parts = [
+        '<section class="variant">',
+        '<div class="variant-word">'
+        f"{html.escape(card.dutch_word)}"
+        f"{format_audio_reference(audio.word_audio if audio else None)}"
+        f"{plural}</div>",
+        f'<div class="variant-ipa">{html.escape(card.ipa_transcription)}</div>',
+    ]
+
+    if card.verb_forms is not None:
+        verb_forms = card.verb_forms
+        verb_audio = audio.verb_form_audio if audio else None
+        parts.extend(
+            [
+                '<div class="grammar">',
+                '<div class="label">Werkwoordsvormen:</div>',
+                '<div class="verb-form"><span class="verb-label">'
+                "Tegenwoordige tijd:</span> "
+                f"{html.escape(verb_forms.present_ik)}"
+                f"{format_audio_reference(verb_audio.present_ik_audio if verb_audio else None)}"
+                "</div>",
+                '<div class="verb-form">'
+                f"{html.escape(verb_forms.present_hij)}"
+                f"{format_audio_reference(verb_audio.present_hij_audio if verb_audio else None)}"
+                "</div>",
+                '<div class="verb-form"><span class="verb-label">'
+                "Verleden tijd:</span> "
+                f"{html.escape(verb_forms.past_tense)}"
+                f"{format_audio_reference(verb_audio.past_audio if verb_audio else None)}"
+                "</div>",
+                '<div class="verb-form"><span class="verb-label">Perfectum:</span> '
+                f"{html.escape(verb_forms.perfect_tense)}"
+                f"{format_audio_reference(verb_audio.perfect_audio if verb_audio else None)}"
+                "</div>",
+            ]
+        )
+        verb_notes = format_verb_notes(verb_forms)
+        if verb_notes:
+            parts.append(f'<div class="verb-notes">{verb_notes}</div>')
+        parts.append("</div>")
+
+    adjective_forms = format_adjective_forms(card.adjective_forms)
+    if adjective_forms:
+        parts.append(
+            '<div class="grammar"><span class="label">'
+            f"Bijvoeglijk naamwoord:</span><br>{adjective_forms}</div>"
+        )
+
+    parts.extend(['<div class="examples">', '<div class="label">Voorbeelden:</div>'])
+    example_audios = audio.example_audios if audio else ()
+    for index, example in enumerate(card.ordered_form_examples()):
+        example_audio = example_audios[index] if index < len(example_audios) else None
+        parts.extend(
+            [
+                '<div class="example">',
+                f'<div class="example-form">{format_example_form(example)}</div>',
+                f'<div class="example-ru">{html.escape(example.example_sentence_ru)}</div>',
+                '<div class="example-nl">'
+                f"{html.escape(example.example_sentence_nl)}"
+                f"{format_audio_reference(example_audio)}</div>",
+                "</div>",
+            ]
+        )
+    parts.extend(["</div>", "</section>"])
+    return "".join(parts)
+
+
+def _ordered_grouped_cards(
+    cards: list[tuple[SourceItem, GeneratedCard]],
+) -> tuple[SourceConcept, list[tuple[SourceItem, GeneratedCard]]]:
+    """Validate and order all generated leaves for one grouped concept."""
+    if len(cards) < 2:
+        raise ValueError("grouped concepts must contain at least two Dutch answers")
+
+    concept = cards[0][0].concept
+    if concept is None:  # pragma: no cover - guarded by the package assembler
+        raise ValueError("grouped cards must reference a source concept")
+
+    concept_identity = concept.identity_key()
+    if any(
+        source_item.concept is None
+        or source_item.concept.identity_key() != concept_identity
+        for source_item, _ in cards
+    ):
+        raise ValueError("grouped cards must all reference the same source concept")
+
+    mismatches = [
+        (source_item.text, card.dutch_word)
+        for source_item, card in cards
+        if not matches_explicit_dutch_answer(card.dutch_word, source_item.text)
+    ]
+    if mismatches:
+        requested, generated = mismatches[0]
+        raise ValueError(
+            "grouped card replaced an explicitly accepted Dutch answer: "
+            f"expected {requested!r}, got {generated!r}"
+        )
+
+    ordered = sorted(cards, key=lambda item: item[0].answer_index)
+    answer_indices = [source_item.answer_index for source_item, _ in ordered]
+    expected_indices = list(range(len(concept.dutch_answers)))
+    if answer_indices != expected_indices:
+        raise ValueError(
+            "grouped cards must contain each concept answer exactly once; "
+            f"expected answer indexes {expected_indices}, got {answer_indices}"
+        )
+    return concept, ordered
+
+
+def build_grouped_note(
+    model: genanki.Model,
+    cards: list[tuple[SourceItem, GeneratedCard]],
+    audio: GroupedNoteAudio | None = None,
+) -> genanki.Note:
+    """Create one scheduled Anki note containing all accepted Dutch answers."""
+    concept, ordered = _ordered_grouped_cards(cards)
+    if concept.translation_hint is None:
+        raise ValueError("grouped concepts require a shared Russian translation hint")
+
+    if audio is None:
+        ordered_audio: GroupedNoteAudio = (None,) * len(ordered)
+    else:
+        ordered_audio = audio
+        if len(ordered_audio) != len(ordered):
+            raise ValueError(
+                "grouped note audio must contain one entry per Dutch answer; "
+                f"expected {len(ordered)}, got {len(ordered_audio)}"
+            )
+
+    field_values = dict.fromkeys(NOTE_FIELDS, "")
+    field_values.update(
+        {
+            "Front": html.escape(concept.translation_hint),
+            "Word_NL": "<br>".join(
+                html.escape(card.dutch_word) for _, card in ordered
+            ),
+            "Translation_RU": html.escape(concept.translation_hint),
+            # A generated single-answer note always has an IPA. Leaving the
+            # top-level field empty selects the grouped template branch.
+            "IPA": "",
+            "POS": '<div class="variants">'
+            + "".join(
+                build_variant_html(card, variant_audio)
+                for (_, card), variant_audio in zip(ordered, ordered_audio, strict=True)
+            )
+            + "</div>",
+            "Lesson": html.escape(concept.lesson or ""),
+            "Topic": html.escape(concept.topic or ordered[0][1].lesson_topic),
+            "SourceWord": html.escape(concept.source_text()),
+        }
+    )
+    fields = [field_values[field_name] for field_name in NOTE_FIELDS]
+    return genanki.Note(
+        model=model,
+        fields=fields,
+        guid=build_note_guid(ordered[0][0]),
+    )
+
+
 def build_note(
     model: genanki.Model,
     source_item: SourceItem,
@@ -396,12 +630,44 @@ def build_note(
     return genanki.Note(model=model, fields=fields, guid=build_note_guid(source_item))
 
 
+def _group_cards_by_note(
+    cards: list[tuple[SourceItem, GeneratedCard]],
+) -> list[list[tuple[SourceItem, GeneratedCard]]]:
+    """Group flat variant leaves into learner-facing notes without reordering them."""
+    groups: list[list[tuple[SourceItem, GeneratedCard]]] = []
+    concept_group_indexes: dict[str, int] = {}
+    for source_item, card in cards:
+        if source_item.concept is None:
+            groups.append([(source_item, card)])
+            continue
+
+        concept_identity = source_item.concept.identity_key()
+        group_index = concept_group_indexes.get(concept_identity)
+        if group_index is None:
+            concept_group_indexes[concept_identity] = len(groups)
+            groups.append([])
+            group_index = len(groups) - 1
+        groups[group_index].append((source_item, card))
+    return groups
+
+
+def _iter_audio_paths(card: GeneratedCard, audio: NoteAudio) -> tuple[Path | None, ...]:
+    """Return every media path referenced by one rendered Dutch answer."""
+    media_paths: list[Path | None] = [audio.word_audio]
+    if card.plural_form:
+        media_paths.append(audio.plural_audio)
+    if card.verb_forms and audio.verb_form_audio:
+        media_paths.extend(audio.verb_form_audio.paths())
+    media_paths.extend(audio.example_audios)
+    return tuple(media_paths)
+
+
 def build_deck_package(
     cards: list[tuple[SourceItem, GeneratedCard]],
     output_path: Path,
     deck_name: str,
     settings: DeckSettings,
-    audio_by_guid: Mapping[str, NoteAudio] | None = None,
+    audio_by_guid: AudioByGuid | None = None,
 ) -> Path:
     """Write a deck package to disk and return its path."""
     deck_id = stable_anki_id(f"{settings.deck_id_seed}:{deck_name}:deck")
@@ -410,17 +676,39 @@ def build_deck_package(
     media_files: list[str] = []
     seen_media_files: set[Path] = set()
 
-    for source_item, card in cards:
-        audio = (audio_by_guid or {}).get(build_note_guid(source_item))
-        deck.add_note(build_note(model, source_item, card, audio=audio))
-        if audio is not None:
-            media_paths = [audio.word_audio]
-            if card.plural_form:
-                media_paths.append(audio.plural_audio)
-            if card.verb_forms and audio.verb_form_audio:
-                media_paths.extend(audio.verb_form_audio.paths())
-            media_paths.extend(audio.example_audios)
-            for media_path in media_paths:
+    for note_cards in _group_cards_by_note(cards):
+        source_item = note_cards[0][0]
+        note_guid = build_note_guid(source_item)
+        note_audio = (audio_by_guid or {}).get(note_guid)
+
+        if source_item.concept is None:
+            if isinstance(note_audio, tuple):
+                raise ValueError("single-answer note audio must be one NoteAudio value")
+            deck.add_note(build_note(model, source_item, note_cards[0][1], audio=note_audio))
+            variant_audios: GroupedNoteAudio = (note_audio,)
+        else:
+            if isinstance(note_audio, NoteAudio):
+                raise ValueError(
+                    "grouped note audio must be a tuple aligned with its Dutch answers"
+                )
+            grouped_audio = note_audio if note_audio is not None else None
+            deck.add_note(build_grouped_note(model, note_cards, audio=grouped_audio))
+            _, ordered_cards = _ordered_grouped_cards(note_cards)
+            note_cards = ordered_cards
+            variant_audios = (
+                grouped_audio
+                if grouped_audio is not None
+                else (None,) * len(note_cards)
+            )
+
+        for (_, card), variant_audio in zip(
+            note_cards,
+            variant_audios,
+            strict=True,
+        ):
+            if variant_audio is None:
+                continue
+            for media_path in _iter_audio_paths(card, variant_audio):
                 if media_path is not None and media_path not in seen_media_files:
                     media_files.append(str(media_path))
                     seen_media_files.add(media_path)

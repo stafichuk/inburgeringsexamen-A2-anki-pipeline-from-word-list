@@ -6,7 +6,7 @@ import json
 
 from .models import GeneratedCard, SourceItem
 
-PROMPT_VERSION = "2026-07-17.1"
+PROMPT_VERSION = "2026-08-17.1"
 
 
 def _pending_payload(pending_items: list[tuple[int, SourceItem]]) -> list[dict[str, object]]:
@@ -15,6 +15,7 @@ def _pending_payload(pending_items: list[tuple[int, SourceItem]]) -> list[dict[s
         {
             "source_id": source_id,
             "input_item": source_item.text,
+            "accepted_dutch_answers": list(source_item.accepted_dutch_answers),
             "translation_hint": source_item.translation_hint,
             "topic": source_item.topic,
             "lesson": source_item.lesson,
@@ -90,6 +91,8 @@ Global diversity rules:
 Card rules:
 - Infer the part of speech. The user does not provide it manually.
 - The cards are for active Dutch vocabulary learning for the A2 Inburgering Spreken exam.
+- Each unresolved row represents exactly one explicitly authored Dutch answer. accepted_dutch_answers is the complete set of answers the learner may use for that Russian prompt.
+- Generate only the input_item assigned to this source_id. Never invent or replace an accepted Dutch answer with a different lexical answer, merge sibling answers into dutch_word, or add a synonym that is not listed in accepted_dutch_answers. The ordinary-plural lemma normalization below is grammatical normalization, not permission to substitute another answer.
 - Russian translations must be natural, concise, and learner-friendly.
 - If a translation hint is provided, treat it as a strict sense constraint. russian_translation and noun front_hint must use that requested Russian sense, examples must match that meaning, and alternative meanings must not be merged into the card.
 - Never include the translation hint or the ' - ' delimiter in dutch_word.
@@ -97,15 +100,16 @@ Card rules:
 - Always fill all common required fields.
 - For non-verbs, every form_examples entry must use the exact visible Dutch form in the form field, and that form must appear in example_sentence_nl.
 - For nouns, dutch_word must include the article directly, e.g. "de tante" or "het huis". In noun form_examples, form must be the bare noun that is visible in the sentence. Never include de or het in a noun form_examples form. For example, dutch_word "het hoofd" uses singular form "hoofd" in "Mijn hoofd doet pijn.", and dutch_word "de tante" uses singular form "tante" in "Mijn tante woont in Amsterdam.".
-- Month names are Dutch de-nouns. For month-name cards, set dutch_word to "de januari", "de februari", "de maart", "de april", "de mei", "de juni", "de juli", "de augustus", "de september", "de oktober", "de november", or "de december". Use the bare month name in form_examples. Set plural_form to null and include one default form_example unless the input explicitly asks for a plural month form.
-- If an input item is already a plural noun, normalize it to the singular lemma in dutch_word and keep the input plural as plural_form. For example, input "de ouders" must produce dutch_word "de ouder" and plural_form "ouders".
-- For countable nouns, plural_form must be the bare plural form without article. Include front_hint in Russian and explicitly prompt plural recall. Include exactly two form_examples: singular and plural.
-- For uncountable nouns, include front_hint, set plural_form to null, do not prompt plural recall, and include exactly one default form_example.
+- Month names are Dutch de-nouns. For month-name cards, set dutch_word to "de januari", "de februari", "de maart", "de april", "de mei", "de juni", "de juli", "de augustus", "de september", "de oktober", "de november", or "de december". Use the bare month name in form_examples. Set noun_number to "uncountable", plural_form to null, and include one default form_example unless the input explicitly asks for a plural month form.
+- If an input item is already a plural noun with an ordinary countable singular lemma, normalize it to that singular lemma in dutch_word and keep the input plural as plural_form. For example, input "de ouders" must produce dutch_word "de ouder", noun_number "countable", and plural_form "ouders".
+- Do not singularize lexicalized plural-only nouns. For example, input "de kleren" must keep dutch_word "de kleren", set noun_number to "plural_only", set plural_form to null, and include exactly one default form_example using the plural-only headword.
+- For countable nouns, set noun_number to "countable". plural_form must be the bare plural form without article. front_hint must contain only the Russian meaning or sense hint. Do not include Dutch text, plural_form, or plural-recall wording in front_hint. The application adds the plural-recall question. For example, for dutch_word "het hoofd", use russian_translation "голова", front_hint "голова", and plural_form "hoofden". Include exactly two form_examples: singular and plural.
+- For uncountable nouns, set noun_number to "uncountable", include front_hint, set plural_form to null, do not prompt plural recall, and include exactly one default form_example.
 - For verbs, include verb_forms with infinitive, present_ik, present_hij, past_tense, perfect_tense, and optionally separable_prefix and conjugation_notes. Include exactly three form_examples: present_tense, past_tense, and perfect_tense.
 - For regular adjectives with two visible forms, set adjective_forms to null and include exactly two form_examples: base_form and e_form.
 - For adjectives without a distinct -e form, include exactly one single_form example in a context where a regular adjective would normally show -e. Include adjective_forms only if an exception note is useful.
 - For other single-form words, include exactly one default form_example.
-- For non-relevant optional fields, use null.
+- For non-nouns, set noun_number to null. For all other non-relevant optional fields, use null.
 - Keep lesson_topic concise and reflect the lesson/topic metadata for the card.
 - tags must be a JSON array of short machine-friendly strings.
 

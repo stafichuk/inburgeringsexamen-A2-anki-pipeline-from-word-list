@@ -1,6 +1,76 @@
+import pytest
 from pydantic import ValidationError
 
-from app.models import GeneratedCard, VerbForms
+from app.models import (
+    GeneratedCard,
+    NounNumber,
+    SourceConcept,
+    VerbForms,
+    matches_explicit_dutch_answer,
+)
+
+
+def test_explicit_dutch_answer_matching_allows_only_article_insertion() -> None:
+    assert matches_explicit_dutch_answer("de kleding", "de kleding")
+    assert matches_explicit_dutch_answer(" DE   KLEDING ", "de kleding")
+    assert matches_explicit_dutch_answer("de kleding", "kleding")
+    assert not matches_explicit_dutch_answer("de garderobe", "de kleding")
+    assert not matches_explicit_dutch_answer("kleding", "de kleding")
+
+
+def test_source_concept_expands_group_into_independent_answer_leaves() -> None:
+    concept = SourceConcept(
+        entry_id="clothes",
+        dutch_answers=("de kleding", "de kleren"),
+        translation_hint="одежда",
+        topic="Kleding",
+        lesson="Les 6",
+        exam_level="A2",
+    )
+
+    source_items = concept.source_items()
+
+    assert concept.source_text() == "de kleding | de kleren"
+    assert concept.identity_key() == "explicit:clothes"
+    assert [item.text for item in source_items] == ["de kleding", "de kleren"]
+    assert [item.entry_id for item in source_items] == ["clothes", None]
+    assert [item.answer_index for item in source_items] == [0, 1]
+    assert all(item.concept_identity_key() == "explicit:clothes" for item in source_items)
+    assert all(
+        item.accepted_dutch_answers == ("de kleding", "de kleren")
+        for item in source_items
+    )
+    assert "concept" not in source_items[0].model_dump()
+    assert "answer_index" not in source_items[0].model_dump()
+
+
+def test_source_concept_keeps_single_answer_as_a_standalone_source_item() -> None:
+    concept = SourceConcept(
+        entry_id="clothes",
+        dutch_answers=("de kleding",),
+        translation_hint="одежда",
+    )
+
+    source_item = concept.source_items()[0]
+
+    assert source_item.entry_id == "clothes"
+    assert source_item.concept is None
+    assert source_item.answer_index == 0
+    assert source_item.accepted_dutch_answers == ("de kleding",)
+    assert source_item.concept_identity_key() == source_item.identity_key()
+
+
+def test_source_concept_requires_hint_for_grouped_answers() -> None:
+    with pytest.raises(ValidationError, match="grouped concepts must include a Russian translation hint"):
+        SourceConcept(dutch_answers=("de kleding", "de kleren"))
+
+
+def test_source_concept_rejects_normalized_duplicate_answers() -> None:
+    with pytest.raises(ValidationError, match="Dutch answers must be unique"):
+        SourceConcept(
+            dutch_answers=("de kleding", " DE   KLEDING "),
+            translation_hint="одежда",
+        )
 
 
 def test_generated_card_accepts_valid_countable_noun_payload() -> None:
@@ -33,6 +103,7 @@ def test_generated_card_accepts_valid_countable_noun_payload() -> None:
 
     card = GeneratedCard.model_validate(payload)
     assert card.plural_form == "scholen"
+    assert card.noun_number == NounNumber.COUNTABLE
 
 
 def test_generated_card_accepts_countable_noun_forms_without_article() -> None:
@@ -95,6 +166,84 @@ def test_generated_card_accepts_uncountable_noun_without_plural_prompt() -> None
 
     assert card.plural_form is None
     assert card.front_hint == "молоко"
+    assert card.noun_number == NounNumber.UNCOUNTABLE
+
+
+def test_generated_card_accepts_plural_only_noun_without_singularizing_it() -> None:
+    card = GeneratedCard.model_validate(
+        {
+            "dutch_word": "de kleren",
+            "russian_translation": "одежда",
+            "part_of_speech": "noun",
+            "ipa_transcription": "/ˈkleː.rə(n)/",
+            "lesson_topic": "Kleding",
+            "form_examples": [
+                {
+                    "kind": "default",
+                    "form": "kleren",
+                    "example_sentence_nl": "Mijn kleren zijn schoon.",
+                    "example_sentence_ru": "Моя одежда чистая.",
+                }
+            ],
+            "tags": ["kleding"],
+            "plural_form": None,
+            "noun_number": "plural_only",
+            "front_hint": "одежда",
+            "verb_forms": None,
+            "adjective_forms": None,
+        }
+    )
+
+    assert card.dutch_word == "de kleren"
+    assert card.noun_number == NounNumber.PLURAL_ONLY
+    assert card.plural_form is None
+    assert [example.kind.value for example in card.form_examples] == ["default"]
+
+
+def test_generated_card_rejects_plural_form_for_plural_only_noun() -> None:
+    with pytest.raises(ValidationError, match="plural_only nouns must not include plural_form"):
+        GeneratedCard.model_validate(
+            {
+                "dutch_word": "de kleren",
+                "russian_translation": "одежда",
+                "part_of_speech": "noun",
+                "ipa_transcription": "/ˈkleː.rə(n)/",
+                "lesson_topic": "Kleding",
+                "form_examples": [
+                    {
+                        "kind": "default",
+                        "form": "kleren",
+                        "example_sentence_nl": "Mijn kleren zijn schoon.",
+                        "example_sentence_ru": "Моя одежда чистая.",
+                    }
+                ],
+                "plural_form": "kleren",
+                "noun_number": "plural_only",
+                "front_hint": "одежда",
+            }
+        )
+
+
+def test_generated_card_rejects_noun_number_for_non_noun() -> None:
+    with pytest.raises(ValidationError, match="non-nouns must set noun_number to null"):
+        GeneratedCard.model_validate(
+            {
+                "dutch_word": "gisteren",
+                "russian_translation": "вчера",
+                "part_of_speech": "adverb",
+                "ipa_transcription": "/ˈɣɪs.tə.rə(n)/",
+                "lesson_topic": "Tijd",
+                "form_examples": [
+                    {
+                        "kind": "default",
+                        "form": "gisteren",
+                        "example_sentence_nl": "Gisteren werkte ik thuis.",
+                        "example_sentence_ru": "Вчера я работал дома.",
+                    }
+                ],
+                "noun_number": "uncountable",
+            }
+        )
 
 
 def test_generated_card_accepts_uncountable_noun_singular_example_alias() -> None:

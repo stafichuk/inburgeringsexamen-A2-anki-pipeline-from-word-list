@@ -10,7 +10,7 @@ from app.llm_client import (
     parse_generated_card,
     parse_generated_cards,
 )
-from app.models import GeneratedCard, SourceItem
+from app.models import GeneratedCard, SourceConcept, SourceItem
 
 
 VALID_JSON = """
@@ -275,6 +275,67 @@ def test_parse_generated_cards_requires_explicit_null_translation_hint() -> None
 
     assert result.cards == {}
     assert result.errors == {1: "translation_hint is missing from the response wrapper"}
+
+
+def test_parse_generated_cards_accepts_exact_explicit_group_answer() -> None:
+    concept = SourceConcept(
+        dutch_answers=("de kleding", "de kleren"),
+        translation_hint="одежда",
+    )
+    card_payload = _card_payload(VALID_MONTH_JSON)
+    card_payload.update(
+        {
+            "dutch_word": "de kleding",
+            "russian_translation": "одежда",
+            "form_examples": [
+                {
+                    "kind": "default",
+                    "form": "kleding",
+                    "example_sentence_nl": "Ik koop nieuwe kleding.",
+                    "example_sentence_ru": "Я покупаю новую одежду.",
+                }
+            ],
+            "front_hint": "одежда",
+        }
+    )
+
+    result = parse_generated_cards(
+        _batch_response(
+            {
+                "source_id": 1,
+                "input_item": "de kleding",
+                "translation_hint": "одежда",
+                "card": card_payload,
+            }
+        ),
+        expected_items={1: concept.source_items()[0]},
+    )
+
+    assert result.errors == {}
+    assert result.cards[1].dutch_word == "de kleding"
+
+
+def test_parse_generated_cards_rejects_unlisted_group_synonym() -> None:
+    concept = SourceConcept(
+        dutch_answers=("de kleding", "de kleren"),
+        translation_hint="одежда",
+    )
+
+    result = parse_generated_cards(
+        _batch_response(
+            _batch_entry(
+                1,
+                "de kleding",
+                VALID_MONTH_JSON,
+                translation_hint="одежда",
+            )
+        ),
+        expected_items={1: concept.source_items()[0]},
+    )
+
+    assert result.cards == {}
+    assert "replaced an explicitly accepted Dutch answer" in result.errors[1]
+    assert "expected 'de kleding', got 'de januari'" in result.errors[1]
 
 
 def test_parse_generated_cards_reports_missing_duplicate_and_unknown_ids() -> None:

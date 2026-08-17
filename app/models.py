@@ -29,6 +29,14 @@ class PartOfSpeech(str, Enum):
     OTHER = "other"
 
 
+class NounNumber(str, Enum):
+    """Number behavior relevant to noun generation and card rendering."""
+
+    COUNTABLE = "countable"
+    UNCOUNTABLE = "uncountable"
+    PLURAL_ONLY = "plural_only"
+
+
 class FormExampleKind(str, Enum):
     """Kinds of form-specific examples rendered on learner cards."""
 
@@ -87,6 +95,18 @@ def _strip_dutch_article(value: str) -> str:
         if normalized.startswith(article):
             return stripped[len(article) :].strip()
     return stripped
+
+
+def matches_explicit_dutch_answer(generated: str, requested: str) -> bool:
+    """Allow article insertion while rejecting lexical replacement of an authored answer."""
+    generated_normalized = " ".join(generated.casefold().split())
+    requested_normalized = " ".join(requested.casefold().split())
+    if generated_normalized == requested_normalized:
+        return True
+
+    if requested_normalized.startswith(("de ", "het ")):
+        return False
+    return _strip_dutch_article(generated_normalized) == requested_normalized
 
 
 class FormExample(StrictModel):
@@ -180,6 +200,83 @@ class AdjectiveForms(StrictModel):
         return value
 
 
+class SourceConcept(StrictModel):
+    """One learner-facing prompt with one or more accepted Dutch answers."""
+
+    entry_id: str | None = None
+    dutch_answers: tuple[str, ...] = Field(min_length=1)
+    translation_hint: str | None = None
+    topic: str | None = None
+    lesson: str | None = None
+    exam_level: str | None = None
+
+    @field_validator("entry_id")
+    @classmethod
+    def normalize_entry_id(cls, value: str | None) -> str | None:
+        """Reject blank explicit IDs used for stable concept identity."""
+        if value is not None and not value.strip():
+            raise ValueError("entry_id must be null or non-empty")
+        return value
+
+    @field_validator("dutch_answers")
+    @classmethod
+    def validate_dutch_answers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject blank or repeated accepted answers after normalizing whitespace and case."""
+        if any(not answer.strip() for answer in value):
+            raise ValueError("Dutch answers must not be empty")
+        normalized = [" ".join(answer.casefold().split()) for answer in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Dutch answers must be unique after normalization")
+        return value
+
+    @field_validator("translation_hint")
+    @classmethod
+    def normalize_translation_hint(cls, value: str | None) -> str | None:
+        """Reject blank translation hints."""
+        if value is not None and not value.strip():
+            raise ValueError("translation_hint must be null or non-empty")
+        return value
+
+    @model_validator(mode="after")
+    def require_grouped_translation_hint(self) -> "SourceConcept":
+        """Require an application-owned Russian front for grouped concepts."""
+        if len(self.dutch_answers) > 1 and self.translation_hint is None:
+            raise ValueError("grouped concepts must include a Russian translation hint")
+        return self
+
+    def source_text(self) -> str:
+        """Return the Dutch side of the authoring line in its original order."""
+        return " | ".join(self.dutch_answers)
+
+    def identity_key(self) -> str:
+        """Return the stable concept identity used for duplicate detection and note GUIDs."""
+        if self.entry_id is not None:
+            return f"explicit:{' '.join(self.entry_id.casefold().split())}"
+
+        first_answer = " ".join(self.dutch_answers[0].casefold().split())
+        if self.translation_hint is None:
+            return f"implicit:{first_answer}"
+        hint = " ".join(self.translation_hint.casefold().split())
+        return f"implicit:{first_answer}|hint:{hint}"
+
+    def source_items(self) -> tuple["SourceItem", ...]:
+        """Expand the concept into independently generated and cached Dutch answers."""
+        is_grouped = len(self.dutch_answers) > 1
+        return tuple(
+            SourceItem(
+                entry_id=self.entry_id if answer_index == 0 else None,
+                text=answer,
+                translation_hint=self.translation_hint,
+                topic=self.topic,
+                lesson=self.lesson,
+                exam_level=self.exam_level,
+                concept=self if is_grouped else None,
+                answer_index=answer_index,
+            )
+            for answer_index, answer in enumerate(self.dutch_answers)
+        )
+
+
 class SourceItem(StrictModel):
     """Input item plus run-time metadata."""
 
@@ -189,6 +286,8 @@ class SourceItem(StrictModel):
     topic: str | None = None
     lesson: str | None = None
     exam_level: str | None = None
+    concept: SourceConcept | None = Field(default=None, exclude=True, repr=False)
+    answer_index: int = Field(default=0, ge=0, exclude=True)
 
     @field_validator("entry_id")
     @classmethod
@@ -225,6 +324,47 @@ class SourceItem(StrictModel):
         hint = " ".join(self.translation_hint.casefold().split())
         return f"implicit:{word}|hint:{hint}"
 
+    @model_validator(mode="after")
+    def validate_concept_membership(self) -> "SourceItem":
+        """Keep runtime-only concept metadata aligned with this answer leaf."""
+        if self.concept is None:
+            if self.answer_index != 0:
+                raise ValueError("standalone source items must use answer_index 0")
+            return self
+
+        if len(self.concept.dutch_answers) < 2:
+            raise ValueError("only grouped source items may reference a concept")
+        if self.answer_index >= len(self.concept.dutch_answers):
+            raise ValueError("answer_index is outside the concept's Dutch answers")
+        expected_answer = self.concept.dutch_answers[self.answer_index]
+        if " ".join(self.text.casefold().split()) != " ".join(expected_answer.casefold().split()):
+            raise ValueError("source item text does not match its concept answer_index")
+        if self.translation_hint != self.concept.translation_hint:
+            raise ValueError("source item translation_hint must match its concept")
+        if (self.topic, self.lesson, self.exam_level) != (
+            self.concept.topic,
+            self.concept.lesson,
+            self.concept.exam_level,
+        ):
+            raise ValueError("source item learning context must match its concept")
+        expected_entry_id = self.concept.entry_id if self.answer_index == 0 else None
+        if self.entry_id != expected_entry_id:
+            raise ValueError("only the first grouped answer may inherit the concept entry_id")
+        return self
+
+    def concept_identity_key(self) -> str:
+        """Return the learner-facing concept identity for this answer leaf."""
+        if self.concept is not None:
+            return self.concept.identity_key()
+        return self.identity_key()
+
+    @property
+    def accepted_dutch_answers(self) -> tuple[str, ...]:
+        """Return every explicitly authored answer accepted for this prompt."""
+        if self.concept is not None:
+            return self.concept.dutch_answers
+        return (self.text,)
+
 
 class GeneratedCard(StrictModel):
     """Strict LLM output schema for one Dutch item."""
@@ -237,7 +377,15 @@ class GeneratedCard(StrictModel):
     form_examples: list[FormExample] = Field(min_length=1, max_length=3)
     tags: list[str] = Field(default_factory=list)
     plural_form: str | None = None
-    front_hint: str | None = None
+    noun_number: NounNumber | None = None
+    front_hint: str | None = Field(
+        default=None,
+        description=(
+            "Russian-only noun meaning or sense hint. Do not include Dutch text, "
+            "plural forms, or plural-recall wording; the application adds the "
+            "plural-recall question for countable nouns."
+        ),
+    )
     verb_forms: VerbForms | None = None
     adjective_forms: AdjectiveForms | None = None
 
@@ -246,6 +394,12 @@ class GeneratedCard(StrictModel):
     def normalize_part_of_speech(cls, value: object) -> object:
         """Accept part-of-speech values regardless of letter case."""
         return _normalize_enum_value(value, PartOfSpeech)
+
+    @field_validator("noun_number", mode="before")
+    @classmethod
+    def normalize_noun_number(cls, value: object) -> object:
+        """Accept noun-number values regardless of letter case."""
+        return _normalize_enum_value(value, NounNumber)
 
     @field_validator(
         "dutch_word",
@@ -296,20 +450,25 @@ class GeneratedCard(StrictModel):
         """Require only the grammar fields relevant to the inferred POS."""
         if self.part_of_speech == PartOfSpeech.NOUN:
             self._require_visible_form_examples()
+            if self.noun_number is None:
+                self.noun_number = (
+                    NounNumber.COUNTABLE
+                    if self.plural_form is not None
+                    else NounNumber.UNCOUNTABLE
+                )
             if not _starts_with_dutch_article(self.dutch_word):
                 raise ValueError("nouns must include article 'de' or 'het' in dutch_word")
             if not self.front_hint:
                 raise ValueError("nouns must include front_hint")
-            if self.plural_form is None and "множественное число" in self.front_hint:
-                raise ValueError("uncountable nouns must not prompt plural recall")
+            if self.noun_number != NounNumber.COUNTABLE and "множественное число" in self.front_hint:
+                raise ValueError("nouns without a plural drill must not prompt plural recall")
             if self.verb_forms is not None:
                 raise ValueError("nouns must not include verb_forms")
             if self.adjective_forms is not None:
                 raise ValueError("nouns must not include adjective_forms")
-            if self.plural_form is None:
-                self._normalize_uncountable_form_example_kind()
-                self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "uncountable nouns")
-            else:
+            if self.noun_number == NounNumber.COUNTABLE:
+                if self.plural_form is None:
+                    raise ValueError("countable nouns must include plural_form")
                 if _starts_with_dutch_article(self.plural_form):
                     raise ValueError("countable noun plural_form must not include article")
                 if _strip_dutch_article(self.dutch_word).casefold() == self.plural_form.casefold():
@@ -321,6 +480,14 @@ class GeneratedCard(StrictModel):
                     {FormExampleKind.SINGULAR, FormExampleKind.PLURAL},
                     "countable nouns",
                 )
+            else:
+                if self.plural_form is not None:
+                    raise ValueError(f"{self.noun_number.value} nouns must not include plural_form")
+                self._normalize_single_noun_form_example_kind()
+                self._require_exact_example_kinds(
+                    {FormExampleKind.DEFAULT},
+                    f"{self.noun_number.value} nouns",
+                )
             return self
 
         if self.part_of_speech == PartOfSpeech.VERB:
@@ -330,6 +497,8 @@ class GeneratedCard(StrictModel):
                 raise ValueError("verbs must not include noun-only fields")
             if self.adjective_forms is not None:
                 raise ValueError("verbs must not include adjective_forms")
+            if self.noun_number is not None:
+                raise ValueError("non-nouns must set noun_number to null")
             self._require_exact_example_kinds(
                 {
                     FormExampleKind.PRESENT_TENSE,
@@ -346,6 +515,8 @@ class GeneratedCard(StrictModel):
                 raise ValueError("adjectives must not include noun-only fields")
             if self.verb_forms is not None:
                 raise ValueError("adjectives must not include verb_forms")
+            if self.noun_number is not None:
+                raise ValueError("non-nouns must set noun_number to null")
             example_kinds = {example.kind for example in self.form_examples}
             if example_kinds == {FormExampleKind.BASE_FORM, FormExampleKind.E_FORM}:
                 if self.adjective_forms is not None:
@@ -364,6 +535,8 @@ class GeneratedCard(StrictModel):
             raise ValueError("non-verbs must not include verb_forms")
         if self.adjective_forms is not None:
             raise ValueError("non-adjectives must not include adjective_forms")
+        if self.noun_number is not None:
+            raise ValueError("non-nouns must set noun_number to null")
         self._require_visible_form_examples()
         self._require_exact_example_kinds({FormExampleKind.DEFAULT}, "single-form words")
         return self
@@ -379,12 +552,12 @@ class GeneratedCard(StrictModel):
                     f"example_sentence_nl {example.example_sentence_nl!r}"
                 )
 
-    def _normalize_uncountable_form_example_kind(self) -> None:
-        """Treat one singular example as the default example for uncountable nouns."""
+    def _normalize_single_noun_form_example_kind(self) -> None:
+        """Treat one number-labelled example as the default for non-countable drills."""
         if len(self.form_examples) != 1:
             return
         example = self.form_examples[0]
-        if example.kind == FormExampleKind.SINGULAR:
+        if example.kind in {FormExampleKind.SINGULAR, FormExampleKind.PLURAL}:
             self.form_examples = [example.model_copy(update={"kind": FormExampleKind.DEFAULT})]
 
     def _require_exact_example_kinds(self, required_kinds: set[FormExampleKind], label: str) -> None:

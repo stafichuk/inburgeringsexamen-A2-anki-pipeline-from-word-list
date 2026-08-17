@@ -1,4 +1,4 @@
-from app.models import GeneratedCard, SourceItem
+from app.models import GeneratedCard, SourceConcept, SourceItem
 from app.prompts import build_messages
 
 
@@ -126,6 +126,29 @@ def test_prompt_passes_translation_hint_as_strict_sense_constraint() -> None:
     assert "de neef - племянник" not in user_prompt
 
 
+def test_prompt_keeps_grouped_answers_as_separate_explicit_rows() -> None:
+    source_items = SourceConcept(
+        entry_id="clothes",
+        dutch_answers=("de kleding", "de kleren"),
+        translation_hint="одежда",
+        topic="Kleding",
+    ).source_items()
+
+    user_prompt = build_messages(
+        [(11, source_items[0]), (12, source_items[1])],
+        [],
+    )[1]["content"]
+
+    assert user_prompt.count('"accepted_dutch_answers"') == 2
+    assert '"input_item": "de kleding"' in user_prompt
+    assert '"input_item": "de kleren"' in user_prompt
+    assert '"de kleding"' in user_prompt
+    assert '"de kleren"' in user_prompt
+    assert "Never invent or replace an accepted Dutch answer" in user_prompt
+    assert "merge sibling answers into dutch_word" in user_prompt
+    assert "add a synonym that is not listed" in user_prompt
+
+
 def test_prompt_normalizes_plural_noun_inputs_to_singular_lemma() -> None:
     source_item = SourceItem(text="de ouders", topic="Familie")
 
@@ -134,7 +157,17 @@ def test_prompt_normalizes_plural_noun_inputs_to_singular_lemma() -> None:
     assert '"input_item": "de ouders"' in user_prompt
     assert "already a plural noun" in user_prompt
     assert 'dutch_word "de ouder"' in user_prompt
+    assert 'noun_number "countable"' in user_prompt
     assert 'plural_form "ouders"' in user_prompt
+
+
+def test_prompt_preserves_lexicalized_plural_only_noun() -> None:
+    user_prompt = _build_single_item_prompt(SourceItem(text="de kleren", topic="Kleding"))
+
+    assert 'input "de kleren" must keep dutch_word "de kleren"' in user_prompt
+    assert 'noun_number to "plural_only"' in user_prompt
+    assert "set plural_form to null" in user_prompt
+    assert "one default form_example using the plural-only headword" in user_prompt
 
 
 def test_prompt_distinguishes_article_bearing_noun_from_bare_example_forms() -> None:
@@ -143,6 +176,14 @@ def test_prompt_distinguishes_article_bearing_noun_from_bare_example_forms() -> 
     assert 'dutch_word "het hoofd"' in user_prompt
     assert 'singular form "hoofd" in "Mijn hoofd doet pijn."' in user_prompt
     assert "Never include de or het in a noun form_examples form" in user_prompt
+
+
+def test_prompt_keeps_countable_noun_front_hint_free_of_plural_answer() -> None:
+    user_prompt = _build_single_item_prompt(SourceItem(text="het hoofd", topic="Het lichaam"))
+
+    assert "front_hint must contain only the Russian meaning or sense hint" in user_prompt
+    assert "Do not include Dutch text, plural_form, or plural-recall wording in front_hint" in user_prompt
+    assert "The application adds the plural-recall question" in user_prompt
 
 
 def test_prompt_teaches_month_names_as_de_nouns() -> None:

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable
 from typing import Protocol
 
 from .anki import NoteAudio, VerbFormAudio, build_deck_package, build_note_guid
@@ -14,11 +14,12 @@ from .audio import AudioGenerationError, AudioGenerator, build_audio_generator
 from .cache import CardCache
 from .config import AppSettings
 from .llm_client import BatchGenerationResult, LLMClient, LLMClientError
-from .models import GeneratedCard, SourceItem
+from .models import GeneratedCard, SourceConcept, SourceItem, matches_explicit_dutch_answer
 from .prompts import PROMPT_VERSION
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_TRANSLATION_DELIMITER = " - "
+SOURCE_ALTERNATIVE_DELIMITER = " | "
 EXPLICIT_ID_PATTERN = re.compile(r"^\[([^\[\]]+)\]\s+(.+)$")
 
 
@@ -64,6 +65,26 @@ class PipelineResult:
     audio_failed_items: list[AudioFailedItem] = field(default_factory=list)
 
 
+def _group_source_indices(source_items: list[SourceItem]) -> list[list[int]]:
+    """Group one-based answer indices by their learner-facing concept."""
+    groups: list[list[int]] = []
+    group_positions: dict[str, int] = {}
+    for index, source_item in enumerate(source_items, start=1):
+        identity = source_item.concept_identity_key()
+        position = group_positions.get(identity)
+        if position is None:
+            group_positions[identity] = len(groups)
+            groups.append([index])
+        else:
+            groups[position].append(index)
+    return groups
+
+
+def _count_complete_groups(groups: list[list[int]], available_indices: set[int]) -> int:
+    """Count concepts for which every accepted Dutch answer is available."""
+    return sum(all(index in available_indices for index in group) for group in groups)
+
+
 @dataclass(slots=True)
 class DeckGenerationPipeline:
     """Coordinate source loading, generation, caching, and deck writing."""
@@ -101,9 +122,10 @@ class DeckGenerationPipeline:
             lesson=lesson or self.settings.generation.default_lesson,
             exam_level=exam_level or self.settings.generation.default_exam_level,
         )
+        source_groups = _group_source_indices(source_items)
         cards_by_index: dict[int, tuple[SourceItem, GeneratedCard]] = {}
         failed_items: list[FailedItem] = []
-        cached_items = 0
+        cached_indices: set[int] = set()
         pending_items: list[tuple[int, SourceItem]] = []
 
         if force:
@@ -116,8 +138,19 @@ class DeckGenerationPipeline:
                     card = None
                 else:
                     card = self.cache.get(source_item)
+                if (
+                    card is not None
+                    and source_item.concept is not None
+                    and not matches_explicit_dutch_answer(card.dutch_word, source_item.text)
+                ):
+                    LOGGER.warning(
+                        "Ignoring cached card for grouped answer '%s' because it contains '%s'.",
+                        source_item.text,
+                        card.dutch_word,
+                    )
+                    card = None
                 if card is not None:
-                    cached_items += 1
+                    cached_indices.add(index)
                     LOGGER.info("Cache hit for '%s'.", source_item.text)
                     cards_by_index[index] = (source_item, card)
                 else:
@@ -134,16 +167,19 @@ class DeckGenerationPipeline:
         )
 
         cards = [cards_by_index[index] for index in sorted(cards_by_index)]
+        accepted_indices = set(cards_by_index)
+        cached_items = _count_complete_groups(source_groups, cached_indices)
+        generated_items = _count_complete_groups(source_groups, accepted_indices)
         if failed_items:
             LOGGER.error(
-                "Deck was not written because %s/%s card(s) remain unresolved.",
+                "Deck was not written because %s/%s answer(s) remain unresolved.",
                 len(failed_items),
                 len(source_items),
             )
             return PipelineResult(
                 output_path=output_path,
-                total_items=len(source_items),
-                generated_items=len(cards),
+                total_items=len(source_groups),
+                generated_items=generated_items,
                 cached_items=cached_items,
                 deck_written=False,
                 failed_items=failed_items,
@@ -164,8 +200,8 @@ class DeckGenerationPipeline:
         build_deck_package(cards, output_path, deck_name, self.settings.deck, audio_by_guid=audio_by_guid)
         return PipelineResult(
             output_path=output_path,
-            total_items=len(source_items),
-            generated_items=len(cards),
+            total_items=len(source_groups),
+            generated_items=generated_items,
             cached_items=cached_items,
             failed_items=failed_items,
             audio_failed_items=audio_failed_items,
@@ -175,12 +211,13 @@ class DeckGenerationPipeline:
         self,
         cards: list[tuple[SourceItem, GeneratedCard]],
         audio_failed_items: list[AudioFailedItem],
-    ) -> dict[str, NoteAudio]:
-        """Generate audio media for cards and return note GUID to audio mappings."""
+    ) -> dict[str, NoteAudio | tuple[NoteAudio | None, ...]]:
+        """Generate per-answer audio and group it by the learner-facing note GUID."""
         if not self.settings.audio.enabled or self.audio_generator is None:
             return {}
 
-        audio_by_guid: dict[str, NoteAudio] = {}
+        audio_by_guid: dict[str, NoteAudio | tuple[NoteAudio | None, ...]] = {}
+        grouped_audio: dict[str, list[NoteAudio | None]] = {}
         for source_item, card in cards:
             LOGGER.info("Generating audio for '%s'.", source_item.text)
             word_audio = self._generate_one_audio(
@@ -212,7 +249,7 @@ class DeckGenerationPipeline:
                 )
                 for index, example in enumerate(card.ordered_form_examples(), start=1)
             )
-            if (
+            has_audio = (
                 word_audio is not None
                 or plural_audio is not None
                 or (
@@ -220,13 +257,30 @@ class DeckGenerationPipeline:
                     and any(verb_audio is not None for verb_audio in verb_form_audio.paths())
                 )
                 or any(example_audio is not None for example_audio in example_audios)
-            ):
-                audio_by_guid[build_note_guid(source_item)] = NoteAudio(
-                    word_audio=word_audio,
-                    plural_audio=plural_audio,
-                    verb_form_audio=verb_form_audio,
-                    example_audios=example_audios,
-                )
+            )
+            if not has_audio:
+                continue
+
+            note_audio = NoteAudio(
+                word_audio=word_audio,
+                plural_audio=plural_audio,
+                verb_form_audio=verb_form_audio,
+                example_audios=example_audios,
+            )
+            guid = build_note_guid(source_item)
+            if source_item.concept is None:
+                audio_by_guid[guid] = note_audio
+                continue
+
+            slots = grouped_audio.setdefault(
+                guid,
+                [None] * len(source_item.concept.dutch_answers),
+            )
+            slots[source_item.answer_index] = note_audio
+
+        audio_by_guid.update(
+            {guid: tuple(answer_audio) for guid, answer_audio in grouped_audio.items()}
+        )
         return audio_by_guid
 
     def _generate_verb_form_audio(
@@ -372,31 +426,43 @@ def load_source_items(
     lesson: str | None,
     exam_level: str | None,
 ) -> list[SourceItem]:
-    """Load source items from a plain text file, one item per line."""
+    """Load source concepts and flatten their Dutch answers for generation."""
     if not input_path.exists():
         raise FileNotFoundError(f"input file not found: {input_path}")
 
     source_items: list[SourceItem] = []
     identity_lines: dict[str, int] = {}
+    concept_identity_lines: dict[str, int] = {}
     for line_number, raw_line in enumerate(input_path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        source_item = parse_source_item_line(
+        source_concept = parse_source_concept_line(
             line,
             line_number=line_number,
             topic=topic,
             lesson=lesson,
             exam_level=exam_level,
         )
-        identity = source_item.identity_key()
-        if identity in identity_lines:
+
+        concept_identity = source_concept.identity_key()
+        if concept_identity in concept_identity_lines:
             raise ValueError(
-                f"duplicate source identity on lines {identity_lines[identity]} and {line_number}; "
+                "duplicate source identity on lines "
+                f"{concept_identity_lines[concept_identity]} and {line_number}; "
                 "add distinct [id] prefixes"
             )
-        identity_lines[identity] = line_number
-        source_items.append(source_item)
+        concept_identity_lines[concept_identity] = line_number
+
+        for source_item in source_concept.source_items():
+            identity = source_item.identity_key()
+            if identity in identity_lines:
+                raise ValueError(
+                    f"duplicate source identity on lines {identity_lines[identity]} and {line_number}; "
+                    "add distinct [id] prefixes"
+                )
+            identity_lines[identity] = line_number
+            source_items.append(source_item)
 
     if not source_items:
         raise ValueError("input file does not contain any vocabulary items")
@@ -412,6 +478,31 @@ def parse_source_item_line(
     exam_level: str | None,
 ) -> SourceItem:
     """Parse one non-empty input line into a source item."""
+    source_concept = parse_source_concept_line(
+        line,
+        line_number=line_number,
+        topic=topic,
+        lesson=lesson,
+        exam_level=exam_level,
+    )
+    source_items = source_concept.source_items()
+    if len(source_items) != 1:
+        raise ValueError(
+            f"grouped vocabulary item on line {line_number} expands to multiple source items; "
+            "use load_source_items"
+        )
+    return source_items[0]
+
+
+def parse_source_concept_line(
+    line: str,
+    *,
+    line_number: int,
+    topic: str | None,
+    lesson: str | None,
+    exam_level: str | None,
+) -> SourceConcept:
+    """Parse one authored line into a learner-facing vocabulary concept."""
     entry_id: str | None = None
     vocabulary_line = line
     if line.startswith("["):
@@ -433,26 +524,42 @@ def parse_source_item_line(
             "expected '<Dutch item> - <Russian translation hint>'"
         )
 
-    if SOURCE_TRANSLATION_DELIMITER not in vocabulary_line:
-        return SourceItem(
-            entry_id=entry_id,
-            text=vocabulary_line,
-            topic=topic,
-            lesson=lesson,
-            exam_level=exam_level,
+    translation_hint: str | None = None
+    dutch_text = vocabulary_line
+    if SOURCE_TRANSLATION_DELIMITER in vocabulary_line:
+        dutch_text, translation_hint = vocabulary_line.split(SOURCE_TRANSLATION_DELIMITER, 1)
+        dutch_text = dutch_text.strip()
+        translation_hint = translation_hint.strip()
+        if not dutch_text or not translation_hint:
+            raise ValueError(
+                f"invalid hinted vocabulary item on line {line_number}; "
+                "expected '<Dutch item> - <Russian translation hint>'"
+            )
+
+    raw_answers = dutch_text.split("|")
+    dutch_answers = tuple(answer.strip() for answer in raw_answers)
+    if "|" in dutch_text and dutch_text != SOURCE_ALTERNATIVE_DELIMITER.join(dutch_answers):
+        raise ValueError(
+            f"invalid Dutch alternatives on line {line_number}; "
+            "separate answers with the exact delimiter ' | '"
+        )
+    if any(not answer for answer in dutch_answers):
+        raise ValueError(
+            f"invalid Dutch alternatives on line {line_number}; "
+            "each side of ' | ' must contain a Dutch answer"
         )
 
-    text, translation_hint = vocabulary_line.split(SOURCE_TRANSLATION_DELIMITER, 1)
-    text = text.strip()
-    translation_hint = translation_hint.strip()
-    if not text or not translation_hint:
+    normalized_answers = [" ".join(answer.casefold().split()) for answer in dutch_answers]
+    if len(normalized_answers) != len(set(normalized_answers)):
+        raise ValueError(f"duplicate Dutch alternative on line {line_number}")
+    if len(dutch_answers) > 1 and translation_hint is None:
         raise ValueError(
-            f"invalid hinted vocabulary item on line {line_number}; "
-            "expected '<Dutch item> - <Russian translation hint>'"
+            f"grouped vocabulary item on line {line_number} requires a Russian translation hint"
         )
-    return SourceItem(
+
+    return SourceConcept(
         entry_id=entry_id,
-        text=text,
+        dutch_answers=dutch_answers,
         translation_hint=translation_hint,
         topic=topic,
         lesson=lesson,

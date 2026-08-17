@@ -6,6 +6,7 @@ CLI application for generating `.apkg` Anki decks from plain Dutch word lists. T
 - Reads a plain text file with one Dutch word or phrase per line and optional stable entry IDs.
 - Calls an external OpenAI-compatible LLM endpoint to infer part of speech and generate structured card data.
 - Supports optional per-line Russian translation hints for sense-specific cards.
+- Supports explicit ` | `-separated Dutch answers for one Russian active-recall concept.
 - Validates every model response against strict Pydantic schemas.
 - Generates all pending cache misses together so the model can coordinate varied examples across the deck.
 - Uses accepted cards as immutable diversity context when generating newly added or previously failed items.
@@ -135,20 +136,29 @@ generate-deck \
 ```
 
 ## Input Word List
-Each non-comment line is a Dutch item with an optional stable ID and optional strict Russian translation hint:
+Each non-comment line is a Dutch item or an explicit group of accepted Dutch answers, with an optional stable ID and optional strict Russian translation hint:
 
 ```text
 de broer
 [neef-nephew] de neef - племянник
 [neef-cousin] de neef - двоюродный брат
+[clothes] de kleding | de kleren - одежда
 [friend] de vrient
 kinderopvang - детский сад
 e-mail
 ```
 
-The optional `[id]` prefix is the stable identity of the entry. When it is omitted, identity is derived from the normalized Dutch item plus its translation hint, if present. Ordinary words and same-spelling words with different hints therefore stay as easy to author as before. Use an explicit ID when you want to correct the Dutch spelling or hint later without changing the Anki note identity, or when two lines would otherwise have the same implicit identity. For example, `[friend] de vrient` can later become `[friend] de vriend` while keeping the same note identity and Anki scheduling. IDs must be unique within the input.
+The optional `[id]` prefix is the stable identity of the learner-facing concept. When it is omitted, identity is derived from the normalized first Dutch answer plus its translation hint, if present. Ordinary words and same-spelling words with different hints therefore stay as easy to author as before. Use an explicit ID when you want to correct or reorder answers later without changing the Anki note identity, or when two lines would otherwise have the same implicit identity. For example, `[friend] de vrient` can later become `[friend] de vriend` while keeping the same note identity and Anki scheduling. IDs must be unique within the input.
 
-The translation delimiter is the spaced form ` - `. Hyphenated Dutch words such as `e-mail` are treated as plain items. A hinted line becomes its own card. Different hints already give the two `de neef` lines separate implicit identities; their explicit IDs additionally keep those identities stable if a word or hint is corrected later.
+The translation delimiter is the spaced form ` - `. Hyphenated Dutch words such as `e-mail` are treated as plain items. Different hints already give the two `de neef` lines separate implicit identities; their explicit IDs additionally keep those identities stable if a word or hint is corrected later.
+
+The accepted-answer delimiter is the exact spaced form ` | ` and is used only on the Dutch side. A grouped line must include a Russian hint, which becomes its authoritative front. The alternatives are explicit: the model generates data for every listed answer but may not add, replace, or merge answers. The authored order is preserved.
+
+```text
+de kleding | de kleren - одежда
+```
+
+This produces one Anki card and one schedule. The front is `одежда`; recalling either Dutch answer counts as correct. The back presents both answers equally, each with its own pronunciation, audio, grammar, and examples. The front does not add a plural-recall question because grouped answers can have different number behaviour.
 
 ## LLM Output Schema
 The model is prompted to return JSON only. Each batch row must echo its `source_id`, exact `input_item`, and exact `translation_hint` (including `null`), which prevents a valid card or same-word sense from being accepted under a swapped source row. Nested card responses are validated against strict Pydantic models with POS-specific requirements.
@@ -161,10 +171,12 @@ Core fields:
 - `lesson_topic`
 - `form_examples`
 - `tags`
+- `noun_number` for nouns
 
 POS-specific fields:
 - countable nouns: article included directly in `dutch_word`, bare `plural_form`, `front_hint`, and `singular` / `plural` examples whose `form` value appears exactly in the sentence
 - uncountable nouns: article included directly in `dutch_word`, plus `front_hint`, with `plural_form: null` and one `default` example whose `form` value appears exactly in the sentence
+- plural-only nouns: the plural headword retained in `dutch_word`, `noun_number: "plural_only"`, `plural_form: null`, and one `default` example
 - verbs: `verb_forms`, with editable forms for `infinitive`, `present_ik`, `present_hij`, `past_tense`, and `perfect_tense`, plus `present_tense`, `past_tense`, and `perfect_tense` examples
 - adjectives with two visible forms: `base_form` and `e_form` examples, with regular adjective form data kept out of `adjective_forms`
 - adjectives without a distinct `-e` form: one `single_form` example in a context that clearly shows the missing `-e`, e.g. `de gouden ring`
@@ -192,8 +204,9 @@ POS-specific fields:
     }
   ],
   "tags": ["school", "lesson-3", "noun"],
+  "noun_number": "countable",
   "plural_form": "scholen",
-  "front_hint": "школа (множественное число?)",
+  "front_hint": "школа",
   "verb_forms": null,
   "adjective_forms": null
 }
@@ -242,6 +255,7 @@ Card behavior:
 - Front side is Russian-driven.
 - Countable noun cards explicitly prompt plural recall.
 - Uncountable noun cards keep the front hint plain and do not add `(множественное число?)`.
+- Grouped cards use the exact shared Russian hint on the front, accept recall of any listed answer, and render one complete back-side block per answer without a plural-recall prompt.
 - Regular adjective cards do not list predictable endings as grammar fields, but examples must show both visible forms, e.g. `mooi` and `mooie`.
 - Onverbuigbare adjectives use one clear `single_form` example in a context where regular adjectives would normally take `-e`, e.g. `de gouden ring`.
 - Verb cards store each form in its own field, e.g. `leren`, `ik leer`, `hij leert`, `leerde`, and `heeft geleerd`, with paired audio fields so HyperTTS can regenerate individual form audio after manual corrections. The back-side grammar block shows the conjugated forms; the infinitive is already shown as the Dutch headword at the top.
@@ -259,6 +273,8 @@ Each accepted card is cached locally in `.cache/cards/`. Its reusable identity i
 
 Changing the source word or translation hint, topic, lesson, or exam level invalidates the affected accepted card. Changing the LLM model or prompt version does not invalidate accepted cards: model and prompt information is generation metadata, while previously accepted content remains frozen.
 
+Grouped concepts keep one cache entry per Dutch answer. Appending a new ` | ` alternative therefore reuses every unchanged accepted answer and generates only the new one. A grouped card is not published until every explicitly listed answer has valid generated data.
+
 An explicit entry ID separates Anki note identity from source content. Correcting the source of `[friend] de vrient` to `[friend] de vriend` regenerates its cached content because the source changed, but retains the stable ID used for the Anki note.
 
 ## Incremental Batch Generation
@@ -274,6 +290,8 @@ The pipeline does not publish a card-incomplete deck. The requested output file,
 This cache format is intentionally separate from the legacy per-card generation cache. The first run after upgrading therefore performs one complete coordinated regeneration. LLM generation no longer accepts the `generation.parallelism` setting or `--parallelism` option because pending cards share one batch request. Audio generation remains sequential and was never controlled by that setting.
 
 Removing a line from the input omits that note from the next generated `.apkg`. Importing the replacement package into Anki does not delete a note that is already present in the collection; remove such notes manually in Anki.
+
+Likewise, converting previously separate notes into one grouped concept does not delete the old standalone notes from an existing Anki collection. After importing the grouped deck, remove any obsolete standalone sibling notes manually once.
 
 ## Audio Generation
 Audio generation is disabled by default. Enable it in the config file:
