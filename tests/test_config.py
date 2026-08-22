@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.config import AppSettings
+from app.config import AppSettings, load_settings
 
 
 def base_settings_payload(cache_dir: Path) -> dict:
@@ -76,3 +76,18 @@ def test_enabled_audio_accepts_region_or_endpoint(tmp_path: Path) -> None:
     assert AppSettings.model_validate(endpoint_payload).audio.azure.endpoint == (
         "https://speech.example.test/cognitiveservices/v1"
     )
+
+
+def test_settings_require_llm_by_default_but_allow_assemble_only_mode(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text('deck:\n  deck_name: "Offline deck"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing required LLM settings"):
+        load_settings(config_path)
+
+    settings = load_settings(config_path, require_llm=False)
+
+    assert settings.llm is None
+    assert settings.deck.deck_name == "Offline deck"

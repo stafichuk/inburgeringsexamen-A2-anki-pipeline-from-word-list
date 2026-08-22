@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dutch-a2-anki-pipeline"
 version = "0.1.0"
-description = "CLI tool for generating Dutch A2 Anki decks with an OpenAI-compatible LLM backend."
+description = "CLI tool for generating Dutch A2 Anki decks from word lists or prepared card data."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

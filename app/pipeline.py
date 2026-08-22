@@ -13,6 +13,7 @@ from .anki import NoteAudio, VerbFormAudio, build_deck_package, build_note_guid
 from .audio import AudioGenerationError, AudioGenerator, build_audio_generator
 from .cache import CardCache
 from .config import AppSettings
+from .generated_input import load_generated_cards
 from .llm_client import BatchGenerationResult, LLMClient, LLMClientError
 from .models import GeneratedCard, SourceConcept, SourceItem, matches_explicit_dutch_answer
 from .prompts import PROMPT_VERSION
@@ -95,15 +96,25 @@ class DeckGenerationPipeline:
     cache: CardCache | None = None
 
     def __post_init__(self) -> None:
+        if self.settings.audio.enabled and self.audio_generator is None:
+            self.audio_generator = build_audio_generator(self.settings.audio)
+
+    def _get_llm_client(self) -> CardGenerator:
+        """Create the LLM client only when word-list mode has cache misses."""
         if self.llm_client is None:
+            if self.settings.llm is None:
+                raise ValueError("LLM settings are required to generate cards from a word list")
             self.llm_client = LLMClient(
                 self.settings.llm,
                 json_repair_enabled=self.settings.generation.json_repair_enabled,
             )
+        return self.llm_client
+
+    def _get_cache(self) -> CardCache:
+        """Create the generated-card cache only when word-list mode uses it."""
         if self.cache is None:
             self.cache = CardCache(self.settings.cache.directory)
-        if self.settings.audio.enabled and self.audio_generator is None:
-            self.audio_generator = build_audio_generator(self.settings.audio)
+        return self.cache
 
     def run(
         self,
@@ -127,9 +138,10 @@ class DeckGenerationPipeline:
         failed_items: list[FailedItem] = []
         cached_indices: set[int] = set()
         pending_items: list[tuple[int, SourceItem]] = []
+        cache = self._get_cache()
 
         if force:
-            self.cache.begin_refresh(source_items)
+            cache.begin_refresh(source_items)
 
         for index, source_item in enumerate(source_items, start=1):
             LOGGER.info("Preparing %s/%s: %s", index, len(source_items), source_item.text)
@@ -137,7 +149,7 @@ class DeckGenerationPipeline:
                 if force:
                     card = None
                 else:
-                    card = self.cache.get(source_item)
+                    card = cache.get(source_item)
                 if (
                     card is not None
                     and source_item.concept is not None
@@ -185,8 +197,62 @@ class DeckGenerationPipeline:
                 failed_items=failed_items,
             )
 
-        if not cards:  # pragma: no cover - guarded by non-empty input and failures above
-            raise RuntimeError("no valid cards were generated; deck will not be written")
+        return self._assemble_deck(
+            cards=cards,
+            output_path=output_path,
+            total_items=len(source_groups),
+            generated_items=generated_items,
+            cached_items=cached_items,
+            failed_items=failed_items,
+            topic=topic,
+            lesson=lesson,
+        )
+
+    def run_from_generated_data(
+        self,
+        *,
+        input_path: Path,
+        output_path: Path,
+        topic: str | None = None,
+        lesson: str | None = None,
+        exam_level: str | None = None,
+    ) -> PipelineResult:
+        """Build a deck from validated pre-generated card data without using an LLM."""
+        cards = load_generated_cards(
+            input_path,
+            topic=topic,
+            lesson=lesson,
+            exam_level=exam_level,
+            default_topic=self.settings.generation.default_topic,
+            default_lesson=self.settings.generation.default_lesson,
+            default_exam_level=self.settings.generation.default_exam_level,
+        )
+        source_groups = _group_source_indices([source_item for source_item, _ in cards])
+        return self._assemble_deck(
+            cards=cards,
+            output_path=output_path,
+            total_items=len(source_groups),
+            generated_items=len(source_groups),
+            cached_items=0,
+            topic=topic,
+            lesson=lesson,
+        )
+
+    def _assemble_deck(
+        self,
+        *,
+        cards: list[tuple[SourceItem, GeneratedCard]],
+        output_path: Path,
+        total_items: int,
+        generated_items: int,
+        cached_items: int,
+        topic: str | None,
+        lesson: str | None,
+        failed_items: list[FailedItem] | None = None,
+    ) -> PipelineResult:
+        """Generate audio and assemble a complete, validated card set into a deck."""
+        if not cards:  # pragma: no cover - both input loaders reject empty inputs
+            raise RuntimeError("no valid cards were provided; deck will not be written")
 
         audio_failed_items: list[AudioFailedItem] = []
         audio_by_guid = self._generate_audio_for_cards(cards, audio_failed_items)
@@ -200,10 +266,10 @@ class DeckGenerationPipeline:
         build_deck_package(cards, output_path, deck_name, self.settings.deck, audio_by_guid=audio_by_guid)
         return PipelineResult(
             output_path=output_path,
-            total_items=len(source_groups),
+            total_items=total_items,
             generated_items=generated_items,
             cached_items=cached_items,
-            failed_items=failed_items,
+            failed_items=failed_items or [],
             audio_failed_items=audio_failed_items,
         )
 
@@ -376,23 +442,28 @@ class DeckGenerationPipeline:
         )
         pending_by_index = dict(pending_items)
         existing_cards = [cards_by_index[index] for index in sorted(cards_by_index)]
+        cache = self._get_cache()
 
         def accept_card(index: int, card: GeneratedCard) -> None:
             source_item = pending_by_index.get(index)
             if source_item is None:
                 LOGGER.warning("Ignoring generated card for unknown source ID %s.", index)
                 return
-            self.cache.set(
+            cache.set(
                 source_item,
                 card,
-                model_name=self.settings.llm.model_name,
+                model_name=(
+                    self.settings.llm.model_name
+                    if self.settings.llm is not None
+                    else type(self.llm_client).__name__
+                ),
                 prompt_version=PROMPT_VERSION,
             )
             cards_by_index[index] = (source_item, card)
             LOGGER.info("Completed %s/%s: %s", index, total_items, source_item.text)
 
         try:
-            result = self.llm_client.generate_cards(
+            result = self._get_llm_client().generate_cards(
                 pending_items,
                 existing_cards,
                 on_card_accepted=accept_card,

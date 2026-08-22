@@ -1,10 +1,11 @@
 # Dutch A2 Inburgering Anki Pipeline
 
-CLI application for generating `.apkg` Anki decks from plain Dutch word lists. The tool is designed for Russian-speaking learners preparing for the A2 Inburgering Spreken exam and can optionally generate Dutch audio with Azure Text to Speech.
+CLI application for generating `.apkg` Anki decks from plain Dutch word lists or assembling them from pre-generated card data. The tool is designed for Russian-speaking learners preparing for the A2 Inburgering Spreken exam and can optionally generate Dutch audio with Azure Text to Speech.
 
 ## Features
 - Reads a plain text file with one Dutch word or phrase per line and optional stable entry IDs.
 - Calls an external OpenAI-compatible LLM endpoint to infer part of speech and generate structured card data.
+- Provides an assemble-only mode that validates prepared card data, generates audio, and writes the deck without using an LLM or generated-card cache.
 - Supports optional per-line Russian translation hints for sense-specific cards.
 - Supports explicit ` | `-separated Dutch answers for one Russian active-recall concept.
 - Validates every model response against strict Pydantic schemas.
@@ -23,6 +24,7 @@ app/
   cache.py
   cli.py
   config.py
+  generated_input.py
   llm_client.py
   models.py
   pipeline.py
@@ -36,7 +38,7 @@ README.md
 
 ## Requirements
 - Python 3.11+
-- A reachable OpenAI-compatible chat-completions endpoint
+- A reachable OpenAI-compatible chat-completions endpoint for word-list generation mode
 - An Azure Speech resource if `audio.enabled` is true
 
 ## Installation
@@ -91,6 +93,8 @@ logging:
 
 See [`config.example.yaml`](config.example.yaml).
 
+The `llm` section is required in the default `generate` mode. It may be omitted in `assemble` mode; deck, generation-default, audio, and logging settings remain available.
+
 ## Usage
 Generate a deck with config defaults:
 
@@ -135,6 +139,18 @@ generate-deck \
   --lesson "Lesson 3"
 ```
 
+Assemble a deck from a prepared generated-data manifest without calling an LLM:
+
+```bash
+generate-deck \
+  --mode assemble \
+  --input generated-cards.json \
+  --output school.apkg \
+  --config audio-and-deck.yaml
+```
+
+Assemble mode does not read or write `.cache/cards`. It validates the complete manifest first, then generates any enabled audio and writes the deck. Generation-only options such as `--force`, LLM overrides, and `--cache-dir` are rejected.
+
 ## Input Word List
 Each non-comment line is a Dutch item or an explicit group of accepted Dutch answers, with an optional stable ID and optional strict Russian translation hint:
 
@@ -159,6 +175,51 @@ de kleding | de kleren - одежда
 ```
 
 This produces one Anki card and one schedule. The front is `одежда`; recalling either Dutch answer counts as correct. The back presents both answers equally, each with its own pronunciation, audio, grammar, and examples. The front does not add a plural-recall question because grouped answers can have different number behaviour.
+
+## Generated-Data Input
+
+Assemble mode accepts strict JSON with a fixed format marker, schema version, and an ordered list of learner-facing concepts. Each answer contains the exact authored Dutch input and one complete card using the `GeneratedCard` schema documented below.
+
+```json
+{
+  "format": "dutch-a2-generated-cards",
+  "schema_version": 1,
+  "concepts": [
+    {
+      "entry_id": "yesterday",
+      "translation_hint": "вчера",
+      "topic": "Tijd",
+      "lesson": "Les 1",
+      "exam_level": "A2 Inburgering Spreken",
+      "answers": [
+        {
+          "input_item": "gisteren",
+          "card": {
+            "dutch_word": "gisteren",
+            "russian_translation": "вчера",
+            "part_of_speech": "adverb",
+            "ipa_transcription": "ˈɣɪstərə(n)",
+            "lesson_topic": "Tijd",
+            "form_examples": [
+              {
+                "kind": "default",
+                "form": "gisteren",
+                "example_sentence_nl": "Gisteren werkte ik thuis.",
+                "example_sentence_ru": "Вчера я работал дома."
+              }
+            ],
+            "tags": ["tijd"]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Concept and answer order is preserved. For a grouped note, place each accepted Dutch answer in the same concept's `answers` array; array position becomes its stable answer position. `entry_id`, `translation_hint`, `topic`, `lesson`, and `exam_level` retain the source identity and deck metadata that raw LLM card objects do not contain. Context fields may be omitted and filled from generation defaults, or explicitly overridden with `--topic`, `--lesson`, and `--exam-level`.
+
+Unknown fields, unsupported schema versions, empty concepts, invalid generated cards, duplicate source identities, and grouped cards that replace an authored Dutch answer are rejected before TTS or deck writing begins.
 
 ## LLM Output Schema
 The model is prompted to return JSON only. Each batch row must echo its `source_id`, exact `input_item`, and exact `translation_hint` (including `null`), which prevents a valid card or same-word sense from being accepted under a swapped source row. Nested card responses are validated against strict Pydantic models with POS-specific requirements.
@@ -277,6 +338,8 @@ Grouped concepts keep one cache entry per Dutch answer. Appending a new ` | ` al
 
 An explicit entry ID separates Anki note identity from source content. Correcting the source of `[friend] de vrient` to `[friend] de vriend` regenerates its cached content because the source changed, but retains the stable ID used for the Anki note.
 
+Assemble mode intentionally bypasses this generated-card cache because its input manifest is authoritative. The independent audio cache is still reused.
+
 ## Incremental Batch Generation
 
 On the first run, all input entries are cache misses and are generated in one coordinated batch. On later runs, only new, changed, missing, or previously invalid entries are requested together. The Dutch examples from all accepted cached cards are included as immutable context so the model can avoid repeating their situations and sentence patterns; cached cards are not returned or rewritten by a normal run.
@@ -330,6 +393,7 @@ Included tests cover:
 - schema validation
 - LLM response parsing
 - deck generation
+- assemble-only generated-data input and CLI mode selection
 - incremental batch caching, retry, and incomplete-deck behavior
 
 ## Notes

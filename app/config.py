@@ -104,7 +104,7 @@ class LoggingSettings(StrictModel):
 class AppSettings(StrictModel):
     """Top-level application settings."""
 
-    llm: LLMSettings
+    llm: LLMSettings | None = None
     deck: DeckSettings = Field(default_factory=DeckSettings)
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
@@ -167,7 +167,12 @@ def _merge_dicts(base: dict[str, Any], overrides: Mapping[str, Any]) -> dict[str
     return merged
 
 
-def load_settings(config_path: Path | None = None, overrides: Mapping[str, Any] | None = None) -> AppSettings:
+def load_settings(
+    config_path: Path | None = None,
+    overrides: Mapping[str, Any] | None = None,
+    *,
+    require_llm: bool = True,
+) -> AppSettings:
     """Load and validate settings from config file plus optional CLI overrides."""
     raw_config: dict[str, Any] = {}
     if config_path is not None:
@@ -175,6 +180,9 @@ def load_settings(config_path: Path | None = None, overrides: Mapping[str, Any] 
 
     merged = _merge_dicts(raw_config, overrides or {})
     try:
-        return AppSettings.model_validate(merged)
+        settings = AppSettings.model_validate(merged)
     except ValidationError as exc:
         raise ValueError(f"invalid configuration: {exc}") from exc
+    if require_llm and settings.llm is None:
+        raise ValueError("missing required LLM settings for word-list generation mode")
+    return settings

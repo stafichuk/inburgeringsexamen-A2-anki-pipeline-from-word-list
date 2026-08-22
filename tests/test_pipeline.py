@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import json
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,131 @@ class FailingOneAlternativeAudioGenerator(FakeAudioGenerator):
         if "de kleren" in text:
             raise AudioGenerationError("alternative synthesis failed")
         return super().generate_audio(text, label=label)
+
+
+def test_pipeline_builds_deck_from_generated_data_without_calling_llm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_input_path = tmp_path / "generated-cards.json"
+    generated_card = make_card("leren")
+    generated_input_path.write_text(
+        json.dumps(
+            {
+                "format": "dutch-a2-generated-cards",
+                "schema_version": 1,
+                "concepts": [
+                    {
+                        "entry_id": "learn",
+                        "translation_hint": "учиться",
+                        "topic": "De school",
+                        "lesson": "Les 1",
+                        "exam_level": "A2",
+                        "answers": [
+                            {
+                                "input_item": "leren",
+                                "card": generated_card.model_dump(mode="json"),
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "deck.apkg"
+    settings = make_settings(tmp_path / ".cache", audio_enabled=True)
+    client = FakeClient()
+    audio_generator = FakeAudioGenerator(tmp_path / "audio")
+    captured_cards: list[tuple[SourceItem, GeneratedCard]] = []
+    captured_audio_by_guid = {}
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        captured_cards.extend(cards)
+        captured_audio_by_guid.update(audio_by_guid or {})
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    result = DeckGenerationPipeline(
+        settings,
+        llm_client=client,
+        audio_generator=audio_generator,
+    ).run_from_generated_data(
+        input_path=generated_input_path,
+        output_path=output_path,
+    )
+
+    assert result.deck_written is True
+    assert result.total_items == 1
+    assert result.generated_items == 1
+    assert result.cached_items == 0
+    assert client.calls == 0
+    assert [(source_item.entry_id, source_item.text, card) for source_item, card in captured_cards] == [
+        ("learn", "leren", generated_card)
+    ]
+    assert audio_generator.calls == [
+        ("word", "leren"),
+        ("verb-infinitive", "leren"),
+        ("verb-present-ik", "ik leer"),
+        ("verb-present-hij", "hij leert"),
+        ("verb-past", "leerde"),
+        ("verb-perfect", "heeft geleerd"),
+        ("example-present-tense", "Ik leer in de les."),
+        ("example-past-tense", "Ik gebruikte leren gisteren."),
+        ("example-perfect-tense", "Hij heeft geleerd."),
+    ]
+    assert captured_audio_by_guid
+    assert output_path.read_text(encoding="utf-8") == "stub"
+
+
+def test_generated_data_mode_needs_no_llm_and_does_not_create_card_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_input_path = tmp_path / "generated-cards.json"
+    generated_input_path.write_text(
+        json.dumps(
+            {
+                "format": "dutch-a2-generated-cards",
+                "schema_version": 1,
+                "concepts": [
+                    {
+                        "answers": [
+                            {
+                                "input_item": "leren",
+                                "card": make_card("leren").model_dump(mode="json"),
+                            }
+                        ]
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cache_directory = tmp_path / "cards-cache"
+    settings = AppSettings.model_validate(
+        {
+            "deck": {"deck_name": "Offline deck"},
+            "cache": {"directory": str(cache_directory)},
+        }
+    )
+
+    def fake_build_deck_package(cards, output_path, deck_name, settings, audio_by_guid=None):  # type: ignore[no-untyped-def]
+        output_path.write_text("stub", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(pipeline_module, "build_deck_package", fake_build_deck_package)
+
+    result = DeckGenerationPipeline(settings).run_from_generated_data(
+        input_path=generated_input_path,
+        output_path=tmp_path / "deck.apkg",
+    )
+
+    assert result.deck_written is True
+    assert cache_directory.exists() is False
 
 
 def test_pipeline_uses_cache_without_calling_llm(tmp_path: Path) -> None:

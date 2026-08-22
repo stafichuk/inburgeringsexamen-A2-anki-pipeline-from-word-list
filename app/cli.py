@@ -19,7 +19,17 @@ def build_parser() -> argparse.ArgumentParser:
         prog="generate-deck",
         description="Generate an Anki .apkg deck for Dutch A2 vocabulary study.",
     )
-    parser.add_argument("--input", required=True, help="Path to the input word list.")
+    parser.add_argument(
+        "--mode",
+        choices=("generate", "assemble"),
+        default="generate",
+        help="Generate cards from a word list or assemble a deck from generated JSON data.",
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Path to the input word list or generated-data JSON, depending on --mode.",
+    )
     parser.add_argument("--output", required=True, help="Path to the output .apkg file.")
     parser.add_argument("--config", help="Path to a YAML, JSON, or TOML config file.")
     parser.add_argument("--topic", help="Override the topic for example generation.")
@@ -125,28 +135,78 @@ def configure_logging(settings: AppSettings) -> None:
     )
 
 
+def validate_mode_arguments(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Reject generation-only CLI options in assemble mode."""
+    if args.mode != "assemble":
+        return
+
+    generation_only_options = {
+        "force": "--force",
+        "base_url": "--base-url",
+        "api_token": "--api-token",
+        "model": "--model",
+        "timeout": "--timeout",
+        "retries": "--retries",
+        "backoff": "--backoff",
+        "temperature": "--temperature",
+        "max_tokens": "--max-tokens",
+        "header": "--header",
+        "cache_dir": "--cache-dir",
+    }
+    incompatible: list[str] = []
+    for attribute, option in generation_only_options.items():
+        value = getattr(args, attribute)
+        if isinstance(value, (bool, list)):
+            was_provided = bool(value)
+        else:
+            was_provided = value is not None
+        if was_provided:
+            incompatible.append(option)
+    if incompatible:
+        parser.error(
+            f"assemble mode does not accept generation-only option(s): {', '.join(incompatible)}"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI command."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    validate_mode_arguments(args, parser)
 
     try:
         overrides = build_overrides(args)
         config_path = Path(args.config) if args.config else None
-        settings = load_settings(config_path=config_path, overrides=overrides)
+        settings = load_settings(
+            config_path=config_path,
+            overrides=overrides,
+            require_llm=args.mode == "generate",
+        )
         configure_logging(settings)
     except Exception as exc:
         parser.error(str(exc))
 
     pipeline = DeckGenerationPipeline(settings)
-    result = pipeline.run(
-        input_path=Path(args.input),
-        output_path=Path(args.output),
-        topic=args.topic,
-        lesson=args.lesson,
-        exam_level=args.exam_level,
-        force=args.force,
-    )
+    if args.mode == "assemble":
+        result = pipeline.run_from_generated_data(
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            topic=args.topic,
+            lesson=args.lesson,
+            exam_level=args.exam_level,
+        )
+    else:
+        result = pipeline.run(
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            topic=args.topic,
+            lesson=args.lesson,
+            exam_level=args.exam_level,
+            force=args.force,
+        )
 
     if result.deck_written:
         logging.info(
